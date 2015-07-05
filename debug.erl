@@ -1,0 +1,17 @@
+-ifdef(DEBUG).
+-ifndef(DP).
+-define(DP(Var), io:format("DEBUG: ~p=~p~n", [??Var, Var])).
+-endif.
+-ifndef(DF).
+-define(DF(F,A), io:format("DEBUG: "++F, A)).
+-define(DF(F), io:format("DEBUG: "++F)).
+-endif.
+-else.
+-ifndef(DP).
+-define(DP(Var), ok).
+-endif.
+-ifndef(DF).
+-define(DF(F,A), ok).
+-define(DF(F), ok).
+-endif.
+-endif.
