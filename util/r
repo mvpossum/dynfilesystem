@@ -1,2 +1,0 @@
-#!/bin/bash
-erlc worker.erl && erlc cmd.erl && erl -run worker s "$@"
