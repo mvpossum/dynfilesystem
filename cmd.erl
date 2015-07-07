@@ -7,7 +7,8 @@ info("WORK") -> [int];
 info("SETPRV") -> [ip,int];
 info("OKPRV") -> [];
 info("OKWORK") -> [];
-info("NWORK") -> [int,int].
+info("NWORK") -> [int,int];
+info("IMNXT") -> [].
 
 parse(B, [binary]) -> [B];
 parse(B, [string]) -> [binary_to_list(B)];

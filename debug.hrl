@@ -3,8 +3,8 @@
 -define(DP(Var), io:format("DEBUG: ~p=~p~n", [??Var, Var])).
 -endif.
 -ifndef(DF).
--define(DF(F,A), io:format("DEBUG: "++F, A)).
--define(DF(F), io:format("DEBUG: "++F)).
+-define(DF(F,A), io:format("DEBUG: "++F++"~n", A)).
+-define(DF(F), io:format("DEBUG: "++F++"~n")).
 -endif.
 -else.
 -ifndef(DP).
