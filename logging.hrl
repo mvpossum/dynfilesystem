@@ -1,0 +1,45 @@
+-define(DEBUG_OUT,1).
+-define(INFO_OUT,1).
+-define(ERROR_OUT,1).
+
+-ifdef(DEBUG_OUT).
+-ifndef(DP).
+-define(DP(Var), io:format("DEBUG: ~p=~p~n", [??Var, Var])).
+-endif.
+-ifndef(DF).
+-define(DF(F), io:format("DEBUG: "++F++"~n")).
+-define(DF(F,A), io:format("DEBUG: "++F++"~n", A)).
+-endif.
+-else.
+-ifndef(DP).
+-define(DP(Var), ok).
+-endif.
+-ifndef(DF).
+-define(DF(F), ok).
+-define(DF(F,A), ok).
+-endif.
+-endif.
+
+-ifdef(INFO_OUT).
+-ifndef(INFO).
+-define(INFO(F), io:format("INFO: "++F++"~n")).
+-define(INFO(F,A), io:format("INFO: "++F++"~n", A)).
+-endif.
+-else.
+-ifndef(INFO).
+-define(INFO(F), ok).
+-define(INFO(F,A), ok).
+-endif.
+-endif.
+
+-ifdef(ERROR_OUT).
+-ifndef(ERROR).
+-define(ERROR(F), io:format("ERROR: "++F++"~n")).
+-define(ERROR(F,A), io:format("ERROR: "++F++"~n", A)).
+-endif.
+-else.
+-ifndef(ERROR).
+-define(ERROR(F), ok).
+-define(ERROR(F,A), ok).
+-endif.
+-endif.

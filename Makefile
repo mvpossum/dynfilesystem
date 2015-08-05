@@ -10,15 +10,14 @@ sadfs: $(BEAM_FILES)
 %.beam: %.erl $(HEADER_FILES)
 	$(ERLC) $<
 	
-ifndef cant
-    cant:=1
+ifndef port
+port := 0
 endif
-
 run: sadfs
-ifeq ($(cant),1)
-	@$(ERL) -run worker start
+ifndef cant
+	@$(ERL) -run worker start $(port) $(folder)
 else
-	@for i in {1..$(cant)}; do ($(TERMINAL) -e "$(ERL) -run worker start $$(($$RANDOM%(65535-1024)+1024)) || sleep 1d"&); done
+	@for i in {1..$(cant)}; do ($(TERMINAL) -e "$(ERL) -run worker start 0 server.$$i || sleep 1d"&); done
 endif
 
 kill:
@@ -27,4 +26,4 @@ kill:
 .PHONY: clean
 
 clean:
-	rm -f *.beam erl_crash.dump
+	rm -rf *.beam erl_crash.dump clients/*.pyc clients/__pycache__
