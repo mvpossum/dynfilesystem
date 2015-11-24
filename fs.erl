@@ -1,59 +1,65 @@
 -module(fs).
 -include_lib("kernel/include/file.hrl").
 -include("logging.hrl").
--export([server/1, lsd/0, stat/1, del/1, exist/1, create/1, open/1, write/2, write/3, read/2, read/3, close/1, rename/2]).
+-export([server/1, lsd/0, stat/1, del/1, exist/1, create/1, open/1, count/0, write/2, write/3, read/2, read/3, close/1, rename/2]).
 
 
 -define(SETUP_TIME, 1000).
 
-procesar(Paq) ->
+%Envia un paquete y espera su respuesta (reenvia si hubo error)
+send(Paq) ->
     worker!{send, Paq},
     F=(fun(F) ->
         receive 
         reset -> F(F)
-        after ?SETUP_TIME -> procesar(Paq)
+        after ?SETUP_TIME -> send(Paq)
         end
     end),
     receive
     reset -> F(F);
     {ans, Ans} -> Ans
     end.
-procesar(Cmd, Args) ->
+%Solicita al worker que cree un paquete y lo envia
+send(Cmd, Args) ->
     worker!{makepaq, self(), Cmd, Args},
-    receive Paq -> Paq end, procesar(Paq).
-    
-lsd() -> procesar("lsd", []).
-del(File) -> {File, Ret}=procesar("del", {File, notfound}), Ret.
-exist(File) -> {File, Ret}=procesar("exist", {File, notfound}), Ret.
-stat(File) -> {File, Ret}=procesar("stat", {File, notfound}), Ret.
+    receive Paq -> Paq end, send(Paq).
+
+%Funciones que usa el cliente
+lsd() -> send("lsd", []).
+del(File) -> {File, Ret}=send("del", {File, notfound}), Ret.
+exist(File) -> {File, Ret}=send("exist", {File, notfound}), Ret.
+stat(File) -> {File, Ret}=send("stat", {File, notfound}), Ret.
 create(File) ->
-    N=procesar("count", 0),
-    {File, Ret}=procesar("cre", {File, N, 1, create}),
+    N=send("count", 0),
+    {File, Ret}=send("cre", {File, N, 1, create}),
     Ret.
 open(File) ->
-	{File, Ret}=procesar("opn", {File, {error, notfound}}),
+	{File, Ret}=send("opn", {File, {error, notfound}}),
 	case Ret of
 	ok -> filesystem!{workeropened, File};
 	_ -> ok
 	end,
 	Ret.
 
+count() ->
+    send("count", 0).
+    
 write(File, Data) ->
-    {File, {Ret, _}}=procesar("wrt", {File, {notfound, Data}}),
+    {File, {Ret, _}}=send("wrt", {File, {notfound, Data}}),
     Ret.
 write(File, Offset, Data) ->
-    {File, {Ret, _, _}}=procesar("wrt2", {File, {notfound, Offset, Data}}),
+    {File, {Ret, _, _}}=send("wrt2", {File, {notfound, Offset, Data}}),
     Ret.
 read(File, Size) ->
-    {File, {Ret, _, Data}}=procesar("rea", {File, {notfound, Size, <<>>}}),
+    {File, {Ret, _, Data}}=send("rea", {File, {notfound, Size, <<>>}}),
     {Ret, Data}.
 read(File, Size, Offset) ->
-    {File, {Ret, _, _, Data}}=procesar("rea2", {File, {notfound, Size, Offset, <<>>}}),
+    {File, {Ret, _, _, Data}}=send("rea2", {File, {notfound, Size, Offset, <<>>}}),
     {Ret, Data}.
-rename(Src, Dst) -> {Src, Dst, Ret}=procesar("mv", {Src, Dst, notfound}), Ret.
+rename(Src, Dst) -> {Src, Dst, Ret}=send("mv", {Src, Dst, notfound}), Ret.
 	
 close(File) ->
-    {File, Ret}=procesar("clo", {File, notfound}),
+    {File, Ret}=send("clo", {File, notfound}),
 	case Ret of
 	ok -> filesystem!{workerclosed, File};
 	_ -> ok
@@ -61,7 +67,7 @@ close(File) ->
 	Ret.
 
 isopen(File) ->
-	{File, Ret}=procesar("isopn", {File, false}),
+	{File, Ret}=send("isopn", {File, false}),
 	Ret.
 	
 findorphans([]) -> ok;
@@ -70,7 +76,8 @@ findorphans([File|Files]) ->
 	false -> close(File);
 	true -> ok
 	end, findorphans(Files).
-	
+
+%servidor de archivos
 server(Folder) ->
     file:make_dir(Folder),
     code:add_path(filename:absname(".")),%OJO

@@ -1,39 +1,45 @@
 -module(worker).
 -include("logging.hrl").
+-include("workerstate.hrl").
 -export([start/0, start/1, start/2]).
 
 -define(UDPPORT,41581).
 -define(MULTICAST,{224, 0, 0, 251}).
 -define(DEFPORT,41581).
--define(DEFSHARE,"DEFAULT").
 -define(BROADCAST_INTERVAL, 1000).
 -define(SETUP_TIME, 1000).
 -define(PACKET_TYPE, {packet, 4}).
 -define(DEFFOLDER, "server").
 
--define(DOCONTINUE, server(Prv, Nxt, MyShare, MyId, MyPort, Leader, Clients, NPaq, StartTime) ).
--define(DORESET, server(MyShare, MyId, MyPort, Clients, NPaq) ).
-server(MyShare, MyId, MyPort, Clients, NPaq) ->
-    [Client!reset || Client <- Clients],
+-define(DOCONTINUE, server(St) ).
+-define(DORESET, restart_server(St) ).
+
+%prepara/reinicia el worker
+restart_server(St) ->
+    [Client!reset || Client <- St#wstate.clients],%avisa a los clientes que se reinicio el anillo
     cache!cleanup,
-    {ok, Prv, Nxt}=ring:create(MyPort),
+    {ok, Prv, Nxt}=ring:create(St#wstate.port),
     ?INFO("Ring created"), 
 	filesystem!dosanitycheck,
-    server(Prv, Nxt, MyShare, MyId, MyPort, true, Clients, NPaq,  erlang:monotonic_time()).
+    server(workerstate:reset_start_time(workerstate:set_prv(Prv, workerstate:set_nxt(Nxt, workerstate:set_leader(St))))).
     
-server(Prv, Nxt, MyShare, MyId, MyPort, Leader, Clients, NPaq, StartTime) ->
+%recibe todos los mensajes del worker
+server(St) ->
+    {MyId, Prv, Nxt} = {St#wstate.id, St#wstate.prv, St#wstate.nxt},
     receive
     {udp,_,_,_,B} ->
         %~ ?DF("UDP~p", [B]),
+        spawn(fun() -> ?DF("~p workers.", [fs:count()]) end),
         case cmd:parse(B) of
-        ["SERVER", MyShare, Id, Ip, Port] when Leader, Id>MyId ->
-            case ring:join(Ip, Port, Prv, Nxt, MyPort) of
+        ["SERVER", Id, Ip, Port] when St#wstate.isleader, Id>MyId ->
+            case ring:join(Ip, Port, Prv, Nxt, St#wstate.port) of
             continue -> ?DOCONTINUE;
             {ok, PrvN, NxtN} ->
 				?INFO("Joined to server ~p at port ~p", [Id, Port]),
-				server(PrvN, NxtN, MyShare, MyId, MyPort, false, Clients, NPaq, erlang:monotonic_time())
+                server(workerstate:reset_start_time(workerstate:set_prv(PrvN, workerstate:set_nxt(NxtN, workerstate:unset_leader(St)))))
             end;
-        _ -> ?DOCONTINUE
+        _ ->
+            ?DOCONTINUE
         end;
     {tcp, Prv, B} ->
         %~ ?DF("TCP~p", [B]),
@@ -41,7 +47,7 @@ server(Prv, Nxt, MyShare, MyId, MyPort, Leader, Clients, NPaq, StartTime) ->
         ["SETPRV",Ip,Port] ->
             case ring:setPrv(Ip, Port, Prv) of
                 continue -> ?DOCONTINUE;
-                {ok,PrvN} -> server(PrvN, Nxt, MyShare, MyId, MyPort, Leader, Clients, NPaq, erlang:monotonic_time())
+                {ok,PrvN} ->  server(workerstate:reset_start_time(workerstate:set_prv(PrvN, St)))
             end;
         ["FS", MyId, _, Cmd, {Client, Args}] ->
             spawn(fun() ->
@@ -67,10 +73,10 @@ server(Prv, Nxt, MyShare, MyId, MyPort, Leader, Clients, NPaq, StartTime) ->
         _ -> ?ERROR("Unhandled TCP-MSG: ~p", [B]), halt(1)
         end;
     {makepaq, Client, Cmd, Args} ->
-        Client!cmd:make(["FS", MyId, NPaq, Cmd, {Client, Args}]),
-        server(Prv, Nxt, MyShare, MyId, MyPort, Leader, Clients, NPaq+1, StartTime);
+        Client!cmd:make(["FS", MyId, St#wstate.numpaq, Cmd, {Client, Args}]),
+        server(workerstate:increment_numpaq(St));
     {send, Data} ->
-        TimeElapsed=erlang:convert_time_unit(erlang:monotonic_time()-StartTime, native, milli_seconds),
+        TimeElapsed=erlang:convert_time_unit(erlang:monotonic_time()-St#wstate.start_time, native, milli_seconds),
         case TimeElapsed>=?SETUP_TIME of
         true ->
             case gen_tcp:send(Nxt, Data) of
@@ -85,23 +91,25 @@ server(Prv, Nxt, MyShare, MyId, MyPort, Leader, Clients, NPaq, StartTime) ->
             end), ?DOCONTINUE
         end;
     {tcp, Nxt, _} -> ?ERROR("Received msg from Nxt"), halt(1);
-    {tcp, S, B} ->
+    {tcp, S, B} -> % sender desconocido
         case cmd:parse(B) of
-        ["WORK", Port] ->
+        ["WORK", Port] ->%es un worker que quiere unirse
             case ring:addWorker(S, Port, Prv, Nxt) of
                 continue -> ?DOCONTINUE;
                 reset -> ?DORESET;
-                {ok, PrvN, NxtN} ->  ?INFO("Worker accepted"), server(PrvN, NxtN, MyShare, MyId, MyPort, Leader, Clients, NPaq, erlang:monotonic_time())
+                {ok, PrvN, NxtN} -> 
+                    ?INFO("Worker accepted"),
+                    server(workerstate:reset_start_time(workerstate:set_prv(PrvN, workerstate:set_nxt(NxtN, St))))
             end;
-        ["CON"] ->
+        ["CON"] ->%es un cliente
             Pid=spawn(fun() -> cliente:handler(S) end),
             gen_tcp:controlling_process(S,Pid),
             ?INFO("Accepted client"),
-            server(Prv, Nxt, MyShare, MyId, MyPort, Leader, [Pid|Clients], NPaq, StartTime);
-        %Messages received from old rings goes here:
+            server(workerstate:add_client(St, Pid));
+        %aqui llegan los mensajes de anillos ya destruidos(descartados):
         _ -> gen_tcp:close(S), ?DOCONTINUE
         end;
-    {client_closed, Pid} -> ?INFO("Client disconnected"), server(Prv, Nxt, MyShare, MyId, MyPort, Leader, Clients--[Pid], NPaq, StartTime);
+    {client_closed, Pid} -> ?INFO("Client disconnected"), server(workerstate:remove_client(St, Pid));
     {tcp_closed, Nxt} -> gen_tcp:close(Prv), ?DORESET;
     {tcp_closed, Prv} -> gen_tcp:close(Nxt), ?DORESET;
     {tcp_closed, _} -> ?DOCONTINUE;
@@ -109,34 +117,40 @@ server(Prv, Nxt, MyShare, MyId, MyPort, Leader, Clients, NPaq, StartTime) ->
     Msg -> ?INFO("Unhandled MSG: ~p", [Msg]), halt(1)
     end.
 
+%retorna la ip de la primer interfaz encontrada
 getip() -> {ok,[{Ip,_,_}|_]}=inet:getif(), Ip.
 
-announce(UDP, MyShare, MyId, MyPort, Enabled) ->
+%anuncia al worker
+announce(UDP, MyId, MyPort, Enabled) ->
     receive
-    enable -> announce(UDP, MyShare, MyId, MyPort, true);
-    disable -> announce(UDP, MyShare, MyId, MyPort, false)
+    enable -> announce(UDP, MyId, MyPort, true);
+    disable -> announce(UDP, MyId, MyPort, false)
     after ?BROADCAST_INTERVAL ->
         case Enabled of
-        true -> gen_udp:send(UDP, ?MULTICAST, ?UDPPORT,  cmd:make(["SERVER", MyShare, MyId, getip(), MyPort]));
+        true -> gen_udp:send(UDP, ?MULTICAST, ?UDPPORT,  cmd:make(["SERVER", MyId, getip(), MyPort]));
         false -> ok
         end,
-        announce(UDP, MyShare, MyId, MyPort, Enabled)
+        announce(UDP, MyId, MyPort, Enabled)
     end.
 
+%acepta todas las conexiones y las manda al worker
 acceptAll(LS) ->
     case gen_tcp:accept(LS) of
     {ok, NS} -> gen_udp:controlling_process(NS,whereis(worker)); 
     {error, Reason} -> ?INFO("Can't accept client: ~p", [Reason])
     end,
     acceptAll(LS).
-    
-start() -> start(0, ?DEFFOLDER, ?DEFSHARE).
-start([MyPortS]) -> start(MyPortS, ?DEFFOLDER, ?DEFSHARE);
-start([MyPortS, Folder]) -> start(MyPortS, Folder, ?DEFSHARE).
-start(MyPortS, Folder, MyShare) when is_list(MyPortS) ->
+
+%formas alternativas de invocar el programa
+start() -> start(0, ?DEFFOLDER).
+start([MyPortS]) -> start(MyPortS, ?DEFFOLDER);
+start([MyPortS, Folder]) -> start(MyPortS, Folder).
+start(MyPortS, Folder) when is_list(MyPortS) ->
     MyPort = try list_to_integer(MyPortS) catch _:_ -> usage() end,
-    start(MyPort, Folder, MyShare);
-start(MyPort, Folder, MyShare) when is_integer(MyPort)->
+    start(MyPort, Folder);
+    
+%main entry: inicia todo los subsistemas
+start(MyPort, Folder) when is_integer(MyPort)->
     register(worker, self()),
     MyId=erlang:phash2({MyPort, getip(), os:system_time(milli_seconds)})+1,
     register(filesystem, spawn_link(fun() -> fs:server(Folder) end)),
@@ -145,11 +159,10 @@ start(MyPort, Folder, MyShare) when is_integer(MyPort)->
     {ok, Port} = inet:port(LS),
     spawn_link(fun() -> acceptAll(LS) end),
     {ok,UDP} = gen_udp:open(?UDPPORT, [binary, {reuseaddr,true}, {active,true},  {ip, ?MULTICAST}, {add_membership, {?MULTICAST, {0,0,0,0}}}]),
-    register(announcer, spawn_link(fun() -> announce(UDP, MyShare, MyId, Port, false) end)),
+    register(announcer, spawn_link(fun() -> announce(UDP, MyId, Port, false) end)),
     ?INFO("Starting worker at port ~p with id ~p", [Port, MyId]),
-    server(MyShare, MyId, Port, [], 0).
+    restart_server(workerstate:create(MyId, Port)).
 
-start(_,_) -> usage().
 usage() ->
     io:format(
 "usage: worker [Folder] [Port]

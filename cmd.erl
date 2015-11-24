@@ -4,7 +4,7 @@
 
 %Por cada comando indico el tipo de sus argumentos
 %%Comandos del anillo
-info("SERVER") -> [string,int,ip,int];
+info("SERVER") -> [int,ip,int];
 info("WORK") -> [int];
 info("SETPRV") -> [ip,int];
 info("OKPRV") -> [];
