@@ -29,7 +29,7 @@ server(St) ->
     receive
     {udp,_,_,_,B} ->
         %~ ?DF("UDP~p", [B]),
-        spawn(fun() -> ?DF("~p workers.", [fs:count()]) end),
+        %~ spawn(fun() -> ?DF("~p workers.", [fs:count()]) end),
         case cmd:parse(B) of
         ["SERVER", Id, Ip, Port] when St#wstate.isleader, Id>MyId ->
             case ring:join(Ip, Port, Prv, Nxt, St#wstate.port) of
@@ -38,11 +38,10 @@ server(St) ->
 				?INFO("Joined to server ~p at port ~p", [Id, Port]),
                 server(workerstate:reset_start_time(workerstate:set_prv(PrvN, workerstate:set_nxt(NxtN, workerstate:unset_leader(St)))))
             end;
-        _ ->
-            ?DOCONTINUE
+        _ -> ?DOCONTINUE
         end;
     {tcp, Prv, B} ->
-        %~ ?DF("TCP~p", [B]),
+        %~ ?DF("TCP~p", [cmd:parse(B)]),
         case cmd:parse(B) of
         ["SETPRV",Ip,Port] ->
             case ring:setPrv(Ip, Port, Prv) of
@@ -54,23 +53,21 @@ server(St) ->
                 filesystem!{ring, self(), Cmd, Args},
                 receive NArgs -> Client!{ans, NArgs} end
             end), ?DOCONTINUE;
-        ["FS", Id, N, Cmd, {Client, Args}] ->
-            spawn(fun() ->
-                cache!{get, self(), Id, N}, receive Cache -> Cache end,
-                case Cache of
+        ["FS", Id, N, Cmd, {Client, Args}] -> %se recibio un mensaje del fs
+            spawn(fun() -> %procesarlo y volverlo a mandar
+                cache!{get, self(), Id, N},
+                receive
                 {ok, Ans} -> worker!{send, Ans};
                 nocached ->
                     filesystem!{ring, self(), Cmd, Args},
                     receive NArgs ->
                         NAns=cmd:make(["FS", Id, N, Cmd, {Client, NArgs}]),
                         cache!{put, Id, N, NAns},
-                        worker!{send, NAns},
-                        worker!goon
+                        worker!{send, NAns}
                     end
                 end
-            end),
-            receive goon -> ?DOCONTINUE end;
-        _ -> ?ERROR("Unhandled TCP-MSG: ~p", [B]), halt(1)
+            end), ?DOCONTINUE;
+        _ -> exit(?ERROR("Unhandled TCP-MSG: ~p", [B]))
         end;
     {makepaq, Client, Cmd, Args} ->
         Client!cmd:make(["FS", MyId, St#wstate.numpaq, Cmd, {Client, Args}]),
@@ -105,16 +102,16 @@ server(St) ->
             Pid=spawn(fun() -> cliente:handler(S) end),
             gen_tcp:controlling_process(S,Pid),
             ?INFO("Accepted client"),
-            server(workerstate:add_client(St, Pid));
+            server(workerstate:add_client(Pid, St));
         %aqui llegan los mensajes de anillos ya destruidos(descartados):
         _ -> gen_tcp:close(S), ?DOCONTINUE
         end;
-    {client_closed, Pid} -> ?INFO("Client disconnected"), server(workerstate:remove_client(St, Pid));
+    {client_closed, Pid} -> ?INFO("Client disconnected"), server(workerstate:remove_client(Pid, St));
     {tcp_closed, Nxt} -> gen_tcp:close(Prv), ?DORESET;
     {tcp_closed, Prv} -> gen_tcp:close(Nxt), ?DORESET;
     {tcp_closed, _} -> ?DOCONTINUE;
-    {'EXIT',_,Reason} -> ?ERROR("~p", [Reason]), halt(1);
-    Msg -> ?INFO("Unhandled MSG: ~p", [Msg]), halt(1)
+    {'EXIT',_,Reason} -> exit(?ERROR("~p", [Reason]));
+    Msg -> exit(?ERROR("Unhandled MSG: ~p", [Msg]))
     end.
 
 %retorna la ip de la primer interfaz encontrada
@@ -152,20 +149,19 @@ start(MyPortS, Folder) when is_list(MyPortS) ->
 %main entry: inicia todo los subsistemas
 start(MyPort, Folder) when is_integer(MyPort)->
     register(worker, self()),
-    MyId=erlang:phash2({MyPort, getip(), os:system_time(milli_seconds)})+1,
-    register(filesystem, spawn_link(fun() -> fs:server(Folder) end)),
     register(cache, spawn_link(fun() -> cache:server() end)),
     {ok, LS} = gen_tcp:listen(MyPort,[binary, ?PACKET_TYPE]),
     {ok, Port} = inet:port(LS),
+    MyId=erlang:phash2({Port, Folder, os:system_time(milli_seconds)})+1,
+    register(filesystem, spawn_link(fun() -> fs:server(fsstate:create(MyId, Folder)) end)),
     spawn_link(fun() -> acceptAll(LS) end),
     {ok,UDP} = gen_udp:open(?UDPPORT, [binary, {reuseaddr,true}, {active,true},  {ip, ?MULTICAST}, {add_membership, {?MULTICAST, {0,0,0,0}}}]),
     register(announcer, spawn_link(fun() -> announce(UDP, MyId, Port, false) end)),
-    ?INFO("Starting worker at port ~p with id ~p", [Port, MyId]),
+    ?INFO("Starting worker at port ~p with id ~p, using storage folder ~p", [Port, MyId, Folder]),
     restart_server(workerstate:create(MyId, Port)).
 
 usage() ->
     io:format(
 "usage: worker [Folder] [Port]
 (default Folder is "++?DEFFOLDER++")
-"),
-    halt(1).
+"), exit(1).

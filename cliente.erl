@@ -4,7 +4,7 @@
 
 
 getanswer(badcmd) ->"Eh?";
-getanswer(alreadyexist) ->"ERROR 1 EFILEXIST";
+getanswer(alreadyexists) ->"ERROR 1 EFILEXIST";
 getanswer(notfound) ->"ERROR 2 ENOTFOUND";
 getanswer(isopen) ->"ERROR 3 EFILEOPEN";
 getanswer(badfd) ->"ERROR 4 EBADFILEDSCP";
@@ -12,6 +12,7 @@ getanswer(notopen) ->"ERROR 5 ENOTOPEN";
 getanswer(alreadyopen) ->"ERROR 6 EALREADYOPEN";
 getanswer(nospaceleft) ->"ERROR 7 ENOSPACELEFT";
 getanswer(invalidname) ->"ERROR 8 EINVALIDNAME";
+getanswer(tryagain) ->"ERROR 9 ETRYAGAIN";
 getanswer(ok) ->"OK".
 
     
@@ -43,6 +44,7 @@ handler(S, OFiles) ->
         case cmd:parse(B) of
         ["LSD"] -> 
             List=fs:lsd(),
+            ?DP(List),
             gen_tcp:send(S, string:join(["OK"|List], " ")), 
             handler(S, OFiles);
         ["STAT", File] -> 
@@ -63,7 +65,7 @@ handler(S, OFiles) ->
                 {Id, NOFiles}=addFile(File, OFiles),
                 gen_tcp:send(S, "OK FD "++integer_to_list(Id)),
                 handler(S, NOFiles);
-            {error, Reason} -> gen_tcp:send(S, getanswer(Reason)), handler(S, OFiles)
+            Reason -> gen_tcp:send(S, getanswer(Reason)), handler(S, OFiles)
             end;
         ["WRT", "FD", FD, "SIZE", Size, Data] ->
             case maps:is_key(FD, OFiles) of

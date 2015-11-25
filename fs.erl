@@ -1,48 +1,9 @@
 -module(fs).
--include_lib("kernel/include/file.hrl").
 -include("logging.hrl").
--export([server/1, lsd/0, stat/1, del/1, exist/1, create/1, open/1, count/0, write/2, write/3, read/2, read/3, close/1, rename/2]).
+-include("fsstate.hrl").
+-export([server/1, lsd/0, stat/1, del/1, create/1, open/1, count/0, write/2, write/3, read/2, read/3, close/1, rename/2]).
 
 
--define(SETUP_TIME, 1000).
-
-%Envia un paquete y espera su respuesta (reenvia si hubo error)
-send(Paq) ->
-    worker!{send, Paq},
-    F=(fun(F) ->
-        receive 
-        reset -> F(F)
-        after ?SETUP_TIME -> send(Paq)
-        end
-    end),
-    receive
-    reset -> F(F);
-    {ans, Ans} -> Ans
-    end.
-%Solicita al worker que cree un paquete y lo envia
-send(Cmd, Args) ->
-    worker!{makepaq, self(), Cmd, Args},
-    receive Paq -> Paq end, send(Paq).
-
-%Funciones que usa el cliente
-lsd() -> send("lsd", []).
-del(File) -> {File, Ret}=send("del", {File, notfound}), Ret.
-exist(File) -> {File, Ret}=send("exist", {File, notfound}), Ret.
-stat(File) -> {File, Ret}=send("stat", {File, notfound}), Ret.
-create(File) ->
-    N=send("count", 0),
-    {File, Ret}=send("cre", {File, N, 1, create}),
-    Ret.
-open(File) ->
-	{File, Ret}=send("opn", {File, {error, notfound}}),
-	case Ret of
-	ok -> filesystem!{workeropened, File};
-	_ -> ok
-	end,
-	Ret.
-
-count() ->
-    send("count", 0).
     
 write(File, Data) ->
     {File, {Ret, _}}=send("wrt", {File, {notfound, Data}}),
@@ -59,190 +20,159 @@ read(File, Size, Offset) ->
 rename(Src, Dst) -> {Src, Dst, Ret}=send("mv", {Src, Dst, notfound}), Ret.
 	
 close(File) ->
-    {File, Ret}=send("clo", {File, notfound}),
-	case Ret of
-	ok -> filesystem!{workerclosed, File};
-	_ -> ok
-	end,
-	Ret.
+    ok.
+    %~ {File, Ret}=send("clo", {File, notfound}),
+	%~ case Ret of
+	%~ ok -> filesystem!{workerclosed, File};
+	%~ _ -> ok
+	%~ end,
+	%~ Ret.
 
-isopen(File) ->
-	{File, Ret}=send("isopn", {File, false}),
-	Ret.
+%~ isopen(File) ->
+	%~ {File, Ret}=send("isopn", {File, false}),
+	%~ Ret.
 	
-findorphans([]) -> ok;
-findorphans([File|Files]) ->
-	case isopen(File) of
-	false -> close(File);
-	true -> ok
-	end, findorphans(Files).
+%~ findorphans([]) -> ok;
+%~ findorphans([File|Files]) ->
+	%~ case isopen(File) of
+	%~ false -> close(File);
+	%~ true -> ok
+	%~ end, findorphans(Files).
 
-%servidor de archivos
-server(Folder) ->
-    file:make_dir(Folder),
-    code:add_path(filename:absname(".")),%OJO
-    ok=file:set_cwd(Folder),
-    server(#{}, sets:new()).
-server(OFiles, WorkerFiles) ->
+
+-define(SETUP_TIME, 1000).
+
+%Solicita al worker que cree un paquete y lo envia
+send(Cmd, Args) ->
+    worker!{makepaq, self(), Cmd, Args},
+    receive Paq -> Paq end, send(Paq).
+%Envia un paquete y espera su respuesta (reenvia si hubo error)
+send(Paq) ->
+    worker!{send, Paq},
     receive
-    {ring, Pid, "lsd", Acc} ->
-        {ok, List} = file:list_dir("."),
-        MyFiles=[File || File <- List, filelib:is_file(File)],
-        false=lists:any(fun (E) -> lists:member(E, Acc) end, MyFiles),
-        Pid!Acc++MyFiles,
-        server(OFiles, WorkerFiles);
-    {ring, Pid, "del", {File, notfound}} ->
-        case maps:is_key(File, OFiles) of
-        true -> Pid!{File, isopen};
-        false ->
-            case file:delete(File) of
-            ok -> Pid!{File, ok};
-            {error, enoent} -> Pid!{File, notfound};
-            _ -> exit("Can't delete file.")
-            end
-        end, server(OFiles, WorkerFiles);
-    {ring, Pid, "exist", {File, notfound}} ->
-        case filelib:is_file(File) of
-        true -> Pid!{File, ok};
-        false -> Pid!{File, notfound}
-        end, server(OFiles, WorkerFiles);
-    {ring, Pid, "count", N} ->
-        Pid!N+1, server(OFiles, WorkerFiles);
-    {ring, Pid, "cre", {File, N, M, create}} ->
-        case filelib:is_file(File) of
-        true -> Pid!{File, alreadyexist};
-        false ->
-            case N of
-            M -> ok=file:write_file(File,<<>>), Pid!{File, ok};
-            _ -> Pid!{File, N, M+1, create}
-            end
-        end, server(OFiles, WorkerFiles);
-    {ring, Pid, "stat", {File, notfound}} ->
-        case file:read_file_info(File) of
-        {ok, FileInfo} -> Pid!{File, {FileInfo#file_info.size, FileInfo#file_info.atime, FileInfo#file_info.mtime, FileInfo#file_info.ctime}};
-        {error, enoent} -> Pid!{File, notfound}
-        end, server(OFiles, WorkerFiles);
-    {ring, Pid, "opn", {File, {error, notfound}}} ->
-        case filelib:is_file(File) of
-        true ->
-            case maps:is_key(File, OFiles) of
-            true -> Pid!{File, {error, alreadyopen}}, server(OFiles, WorkerFiles);
-            false ->
-                case file:open(File, [read,append,raw,binary]) of
-                {ok, FD} -> Pid!{File, ok}, server(OFiles#{File => FD}, WorkerFiles);
-                _ -> exit("Can't open file.")
-                end
-            end;
-        false -> Pid!{File, {error, notfound}}, server(OFiles, WorkerFiles)
-        end;
-    {ring, Pid, "clo", {File, notfound}} ->
-        case filelib:is_file(File) of
-        true ->
-            case maps:get(File, OFiles, nokey) of
-            nokey -> Pid!{File, notopen}, server(OFiles, WorkerFiles);
-            FD -> 
-                file:close(FD),
-                Pid!{File, ok}, server(maps:remove(File, OFiles), WorkerFiles)
-            end;
-        false -> Pid!{File, notfound}, server(OFiles, WorkerFiles)
-        end;
-    {ring, Pid, "wrt", {File, {notfound, Data}}} ->
-        case filelib:is_file(File) of
-        true ->
-            case maps:get(File, OFiles, nokey) of
-            nokey -> Pid!{File, {notopen, <<>>}};
-            FD -> 
-                case file:write(FD, Data) of
-                ok -> Pid!{File, {ok, <<>>}};
-                {error, enospc} ->  Pid!{File, {nospaceleft, <<>>}};
-                _ -> exit("Can't write file")
-                end
-            end;
-        false -> Pid!{File, {notfound, Data}}
-        end, server(OFiles, WorkerFiles);
-    {ring, Pid, "wrt2", {File, {notfound, Offset, Data}}} ->
-        case filelib:is_file(File) of
-        true ->
-            case maps:get(File, OFiles, nokey) of
-            nokey -> 
-                case file:open(File, [read,append,raw,binary]) of
-                {ok, FD} ->
-					file:position(FD, Offset),
-					case file:write(FD, Data) of
-					ok -> Pid!{File, {ok, 0, <<>>}};
-					{error, enospc} ->  Pid!{File, {nospaceleft, 0, <<>>}};
-					_ -> exit("Can't write file")
-					end,
-					file:close(FD);
-                _ -> exit("Can't open file.")
-                end;
-            _ -> Pid!{File, {alreadyopen, 0, <<>>}}
-            end;
-        false -> Pid!{File, {notfound, Offset, Data}}
-        end, server(OFiles, WorkerFiles);
-    {ring, Pid, "rea", {File, {notfound, Size, <<>>}}} ->
-        case filelib:is_file(File) of
-        true ->
-            case maps:get(File, OFiles, nokey) of
-            nokey -> Pid!{File, {notopen, 0, <<>>}};
-            FD -> 
-                case file:read(FD, Size) of
-                {ok, Data} -> Pid!{File, {ok, byte_size(Data), Data}};
-                eof -> Pid!{File, {ok, 0, <<>>}};
-                _ -> exit("Can't read file")
-                end
-            end;
-        false -> Pid!{File, {notfound, Size, <<>>}}
-        end, server(OFiles, WorkerFiles);
-    {ring, Pid, "rea2", {File, {notfound, Size, Offset, <<>>}}} ->
-        case filelib:is_file(File) of
-        true ->
-            case maps:get(File, OFiles, nokey) of
-            nokey -> 
-                case file:open(File, [read,append,raw,binary]) of
-                {ok, FD} ->
-					file:position(FD, Offset),
-					case file:read(FD, Size) of
-					{ok, Data} -> Pid!{File, {ok, byte_size(Data), Offset, Data}};
-					eof -> Pid!{File, {ok, 0, 0, <<>>}};
-					_ -> exit("Can't read file")
-					end,
-					file:close(FD);
-                _ -> exit("Can't open file.")
-                end;
-            _ -> Pid!{File, {alreadyopen, 0, 0, <<>>}}
-            end;
-        false -> Pid!{File, {notfound, Size, Offset, <<>>}}
-        end, server(OFiles, WorkerFiles);
-    {ring, Pid, "mv", {Src, Dst, notfound}} ->
-        case filelib:is_file(Src) of
-        true ->
-            file:delete(Dst),
-			case file:rename(Src, Dst) of
-			ok -> Pid!{Src, Dst, ok};
-			{error, _} -> Pid!{Src, Dst, invalidname}
-			end;
-        false -> Pid!{Src, Dst, notfound}
-        end, server(OFiles, WorkerFiles);
-    {ring, Pid, "mv", {Src, Dst, Acc}} ->
-		false=filelib:is_file(Src),
-        file:delete(Dst),
-		Pid!{Src, Dst, Acc},
-		server(OFiles, WorkerFiles);
-    {ring, Pid, "isopn", {File, Acc}} ->
-        case sets:is_element(File, WorkerFiles) of
-        true -> Pid!{File, true};
-        false -> Pid!{File, Acc}
-        end, server(OFiles, WorkerFiles);
-    {ring, Pid, Cmd, {File, Acc}} ->
-        case lists:member(Cmd, ["del", "exist", "cre", "opn", "wrt", "wrt2", "rea", "rea2", "clo", "stat"]) of
-        true ->
-            false=filelib:is_file(File), Pid!{File, Acc};
-        _ -> exit(io_lib:format("Unknown Msg: ~p", {ring, Pid, Cmd, {File, Acc}}))
-        end, server(OFiles, WorkerFiles);
-    {workeropened, File} -> server(OFiles, sets:add_element(File,WorkerFiles));
-    {workerclosed, File} -> server(OFiles, sets:del_element(File,WorkerFiles));
-    dosanitycheck -> spawn(fun() -> lsd(), findorphans(maps:keys(OFiles)) end), server(OFiles, WorkerFiles);
-    Msg -> exit(io_lib:format("Unknown Msg: ~p", Msg))
+    {ans, Ans} -> Ans;
+    reset -> timer:apply_after(?SETUP_TIME, ?MODULE, send, [Paq])
     end.
 
+
+%servidor de archivos
+server(St) ->
+    receive
+    {ring, Pid, Cmd, Acc} ->%mensaje del anillo
+        {NwSt, Ans} = procesar(Cmd, Acc, St),
+        Pid!Ans,%envia la respuesta al siguiente worker
+        server(NwSt);
+    dosanitycheck -> server(St);
+    {access_state, Func, Pid} -> Pid!{access_state, Func(St)}, server(St);
+    {clientopened, File} -> server(fsstate:open_file_client(File, St));
+    {clientclosed, File} -> server(fsstate:close_file_client(File, St));
+    %dosanitycheck -> spawn(fun() -> lsd(), findorphans(maps:keys(St#fsstate.openfiles)) end), server(St);
+    Msg -> exit(?ERROR("Unknown Msg: ~p", [Msg]))
+    end.
+
+access_state(Func) ->
+    filesystem!{access_state, Func, self()},
+    receive {access_state, Ans} -> Ans end.
+
+%Funciones que usa el cliente
+count() -> send("count", 0).
+lsd() -> send("lsd", []).
+exists(File) -> {File, Ret}=send("exists", {File, notfound}), Ret.
+lock(File, Why) ->
+    case access_state(fun(St) -> fsstate:is_locked(File, St) end) of
+    true -> bad;%alreadylocked!
+    false ->
+        MyId=access_state(fun(St) -> St#fsstate.id end),
+        {File, {MyId, Why, Res}} = send("lock", {File, {MyId, Why, ok}}),
+        Res
+    end.
+unlock(File) -> send("unlock", File).
+del(File) ->
+    case access_state(fun(St) -> fsstate:why_locked(File, St) end) of
+    open -> isopen;
+    notlocked ->
+        case lock(File, for_delete) of
+        ok -> {File, Res} = send("del", {File, notfound}), Res;
+        bad -> tryagain
+        end;
+    _ -> tryagain   %some operation is in progress now
+    end.
+stat(File) -> {File, Ret}=send("stat", {File, notfound}), Ret.
+
+create(File) -> 
+    case access_state(fun(St) -> fsstate:why_locked(File, St) end) of
+    open -> isopen;
+    notlocked ->
+        case lock(File, for_create) of
+        ok -> 
+            Ans = case exists(File) of
+                  notfound -> access_state(fun(St) -> fsstate:create_file(File, St) end), ok;
+                  _ -> alreadyexists
+                  end,
+            unlock(File),
+            Ans;
+        bad -> tryagain
+        end;
+    _ -> tryagain   %some operation is in progress now
+    end.
+
+open(File) ->
+    case access_state(fun(St) -> fsstate:why_locked(File, St) end) of
+    open -> alreadyopen;
+    notlocked ->
+        case lock(File, open) of
+        ok ->
+            {File, Res} = send("opn", {File, notfound}),
+            case Res of
+            ok -> filesystem!{clientopened, File};
+            _-> unlock(File)
+            end,
+            Res;
+        bad -> tryagain
+        end;
+    _ -> tryagain   %some operation is in progress now
+    end.
+
+%procesar recibe el mensaje que llega y el estado. Devuelve el nuevo estado y el mensaje procesado
+procesar("lsd", Acc, St) ->
+    LocalFiles=fsstate:list_local_files(St),
+    false=lists:any(fun (File) -> lists:member(File, Acc) end, LocalFiles),
+    {St, Acc++LocalFiles};
+procesar("exists", {File, notfound}, St) ->
+    case fsstate:exists_locally(File, St) of
+    true -> {St, {File, ok}};
+    false -> {St, {File, notfound}}
+    end;
+procesar("count", N, St) -> {St, N+1};
+procesar("lock", {File, {Id, Why, ok}}, St) ->
+    case fsstate:is_locked(File, St) of
+    false -> {fsstate:lock_file(File, Id, Why, St), {File, {Id, Why, ok}}};
+    true ->
+        case fsstate:who_locked(File, St)<Id of
+        true -> {fsstate:lock_file(File, Id, Why, St), {File, {Id, Why, ok}}};
+        false -> {St, {File, {Id, Why, bad}}}
+        end
+    end;
+procesar("unlock", File, St) -> {fsstate:unlock_file(File, St), File};
+procesar("del", {File, Acc}, St) ->
+    NwSt = fsstate:unlock_file(File, St),
+    case fsstate:delete_file(File, St) of
+    ok -> {NwSt, {File, ok}};
+    {error, enoent} -> {NwSt, {File, Acc}};
+    _ -> exit(?ERROR("Can't delete file ~p.", [File]))
+    end;
+procesar("stat", {File, notfound}, St) ->
+    case fsstate:file_info(File, St) of
+    notfound -> {St, {File, notfound}};
+    Info -> {St, {File, Info}}
+    end;
+procesar("opn", {File, notfound}, St) ->
+    case fsstate:exists_locally(File, St) of
+    true ->  {fsstate:open_file(File, St), {File, ok}};
+    false -> {St, {File, notfound}}
+    end;
+        
+%mensajes ya listos reenviarlos directamente
+procesar(Str, Acc, St) when Str=="lsd"; Str=="del"; Str=="exists"; Str=="stat"; Str=="lock"; Str=="opn" ->
+    {St, Acc};
+procesar(Cmd, Acc, _) -> exit(?ERROR("Unknown Command: ~p", [{Cmd, Acc}])).
