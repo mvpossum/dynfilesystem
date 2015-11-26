@@ -1,7 +1,5 @@
 -Announce random worker
 -Test cases
--cln state 
--Rename workerstate to wrkstate
 -separar comunicacion (tcp/udp) en otro modulo?
 -Fix fuse
 -Informe, debe contener:

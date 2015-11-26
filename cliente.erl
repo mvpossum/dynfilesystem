@@ -1,125 +1,116 @@
 -module(cliente).
 -include("logging.hrl").
+-include("clientstate.hrl").
 -export([handler/1]).
 
-
-getanswer(badcmd) ->"Eh?";
-getanswer(alreadyexists) ->"ERROR 1 EFILEXIST";
-getanswer(notfound) ->"ERROR 2 ENOTFOUND";
-getanswer(isopen) ->"ERROR 3 EFILEOPEN";
-getanswer(badfd) ->"ERROR 4 EBADFILEDSCP";
-getanswer(notopen) ->"ERROR 5 ENOTOPEN";
-getanswer(alreadyopen) ->"ERROR 6 EALREADYOPEN";
-getanswer(nospaceleft) ->"ERROR 7 ENOSPACELEFT";
-getanswer(invalidname) ->"ERROR 8 EINVALIDNAME";
-getanswer(tryagain) ->"ERROR 9 ETRYAGAIN";
-getanswer(ok) ->"OK".
-
-    
-cleanup(OFiles) ->
-    [fs:close(V) || V <- maps:values(OFiles)],
-    worker!{client_closed, self()}.
-
-addFile(File, OFiles) ->
-    Id=random:uniform(999),
-    case maps:is_key(Id, OFiles) of
-    true -> addFile(File, OFiles);
-    false -> {Id, OFiles#{Id => File}}
-    end.
-
-
-iso_8601_fmt(DateTime) ->
-    {{Year,Month,Day},{Hour,Min,Sec}} = DateTime,
-    io_lib:format("~4.10.0B-~2.10.0B-~2.10.0B ~2.10.0B:~2.10.0B:~2.10.0B",
-        [Year, Month, Day, Hour, Min, Sec]).
- 
-handler(S) ->
-    random:seed(erlang:phash2([node()]), erlang:monotonic_time(), erlang:unique_integer()),
-    gen_tcp:send(S, "OK ID 0"),
-    handler(S, #{}).
-handler(S, OFiles) ->
+handler(St) ->
+    S = St#cstate.sock,
     receive
     {tcp, S, B} ->
         ?INFO("Received ~p from client.", [B]),
         case cmd:parse(B) of
-        ["LSD"] -> 
-            List=fs:lsd(),
-            gen_tcp:send(S, string:join(["OK"|List], " ")), 
-            handler(S, OFiles);
-        ["STAT", File] -> 
-            case fs:stat(File) of
-            notfound -> gen_tcp:send(S, getanswer(notfound));
-            {Size, Atime, Mtime, Ctime} ->
-                gen_tcp:send(S, ["OK SIZE ",integer_to_list(Size)," ACCESS ",iso_8601_fmt(Atime)," MODIFY ",iso_8601_fmt(Mtime)," CREATE ",iso_8601_fmt(Ctime)])
-            end, handler(S, OFiles);
-        ["DEL", File] ->
-            gen_tcp:send(S, getanswer(fs:del(File))), 
-            handler(S, OFiles);
-        ["CRE", File] ->
-            gen_tcp:send(S, getanswer(fs:create(File))), 
-            handler(S, OFiles);
-        ["OPN", File] ->
-            case fs:open(File) of
-            ok ->
-                {Id, NOFiles}=addFile(File, OFiles),
-                gen_tcp:send(S, "OK FD "++integer_to_list(Id)),
-                handler(S, NOFiles);
-            Reason -> gen_tcp:send(S, getanswer(Reason)), handler(S, OFiles)
-            end;
-        ["WRT", "FD", FD, "SIZE", Size, Data] ->
-            case maps:is_key(FD, OFiles) of
-            false -> gen_tcp:send(S, getanswer(badfd));
-            true ->
-                DataCrop=case Size<byte_size(Data) of
-                true -> binary:part(Data, 0, Size);
-                false -> Data
-                end,
-                gen_tcp:send(S, getanswer(fs:write(maps:get(FD, OFiles), DataCrop)))
-            end, handler(S, OFiles);
-        ["WRT2", Name, Size, Offset, Data] ->
-			DataCrop=case Size < byte_size(Data) of
-			true -> binary:part(Data, 0, Size);
-			false -> Data
-			end,
-			gen_tcp:send(S, getanswer(fs:write(Name, Offset, DataCrop))),
-            handler(S, OFiles);
-        ["REA", "FD", FD, "SIZE", Size] ->
-            case maps:is_key(FD, OFiles) of
-            false -> gen_tcp:send(S, getanswer(badfd));
-            true ->
-                 case fs:read(maps:get(FD, OFiles), Size) of
-                 {ok, Data} ->
-					Data2=case byte_size(Data) of 0 ->  []; _ -> [<<" ">>,Data] end,
-					Ans=[<<"OK SIZE ">>,cmd:toBin(byte_size(Data), int), Data2],
-					gen_tcp:send(S, Ans);
-                 {Error, _} -> gen_tcp:send(S, getanswer(Error))
-                 end
-            end, handler(S, OFiles);
-        ["REA2", "FD", FD, "OFFSET", Offset, "SIZE", Size] ->
-            case maps:is_key(FD, OFiles) of
-            false -> gen_tcp:send(S, getanswer(badfd));
-            true ->
-                 case fs:read(maps:get(FD, OFiles), Offset, Size) of
-                 {ok, Data} ->
-                    Data2=case byte_size(Data) of 0 ->  []; _ -> [<<" ">>,Data] end,
-                    Ans=[<<"OK SIZE ">>,cmd:toBin(byte_size(Data), int), Data2],
-                    gen_tcp:send(S, Ans);
-                 {Error, _} -> gen_tcp:send(S, getanswer(Error))
-                 end
-            end, handler(S, OFiles);
-        ["MV", Src, Dst] ->
-			 gen_tcp:send(S, getanswer(fs:rename(Src, Dst))),
-			 handler(S, OFiles);
-        ["CLO", "FD", FD] ->
-            case maps:is_key(FD, OFiles) of
-            false -> gen_tcp:send(S, getanswer(badfd)), handler(S, OFiles);
-            true ->
-                gen_tcp:send(S, getanswer(fs:close(maps:get(FD, OFiles)))),
-                handler(S, maps:remove(FD,OFiles))
-            end;
-        ["BYE"] -> gen_tcp:send(S, getanswer(ok)), gen_tcp:close(S), cleanup(OFiles);
-        _ -> gen_tcp:send(S, getanswer(badcmd)), handler(S, OFiles)
+        ["BYE"] ->
+            clientstate:send(getanswer(ok), St),
+            clientstate:cleanup(St);
+        OtherMsg -> 
+            {NwSt, Ans} = handleCommand(OtherMsg, St),
+            clientstate:send(Ans, St), handler(NwSt)
         end;
-    reset -> handler(S, OFiles);
-    {tcp_closed, _} -> ?INFO("Client closed"), cleanup(OFiles)
+    reset -> handler(St);
+    {tcp_closed, _} -> ?INFO("Client closed"), clientstate:cleanup(St)
     end.
+
+getanswer(ok) -> "OK";
+getanswer(badcmd) -> "Eh?";
+getanswer(alreadyexists) -> "ERROR 1 EFILEXIST";
+getanswer(notfound) -> "ERROR 2 ENOTFOUND";
+getanswer(isopen) -> "ERROR 3 EFILEOPEN";
+getanswer(badfd) -> "ERROR 4 EBADFILEDSCP";
+getanswer(notopen) -> "ERROR 5 ENOTOPEN";
+getanswer(alreadyopen) -> "ERROR 6 EALREADYOPEN";
+getanswer(nospaceleft) -> "ERROR 7 ENOSPACELEFT";
+getanswer(invalidname) -> "ERROR 8 EINVALIDNAME";
+getanswer(tryagain) -> "ERROR 9 ETRYAGAIN".
+
+handleCommand(["LSD"], St) ->
+    List = fs:lsd(),
+    {St, string:join(["OK"|List], " ")};
+handleCommand(["STAT", File], St) ->
+    case fs:stat(File) of
+    notfound -> getanswer(notfound);
+    {Size, Atime, Mtime, Ctime} ->
+        {St, ["OK SIZE ",integer_to_list(Size)," ACCESS ",iso_8601_fmt(Atime)," MODIFY ",iso_8601_fmt(Mtime)," CREATE ",iso_8601_fmt(Ctime)]}
+    end;
+handleCommand(["DEL", File], St) ->
+    {St, getanswer(fs:del(File))};
+handleCommand(["CRE", File], St) ->
+    {St, getanswer(fs:create(File))};
+handleCommand(["OPN", File], St) ->
+    case fs:open(File) of
+    ok ->
+        {NwSt, FD}=clientstate:open_file(File, St),
+        {NwSt, "OK FD "++integer_to_list(FD)};
+    Reason -> {St, getanswer(Reason)}
+    end;
+handleCommand(["WRT", "FD", FD, "SIZE", Size, Data], St) ->
+    case clientstate:get_file(FD, St) of
+    notopen -> {St, getanswer(badfd)};
+    File -> 
+        DataCrop=crop_extra_data(Data, Size),
+        {St, getanswer(fs:write(File, DataCrop))}
+    end;
+handleCommand(["WRT2", "FD", FD, "SIZE", Size, "OFFSET", Offset, Data], St) ->
+    case clientstate:get_file(FD, St) of
+    notopen -> {St, getanswer(badfd)};
+    File -> 
+        DataCrop=crop_extra_data(Data, Size),
+        {St, getanswer(fs:write(File, Offset, DataCrop))}
+    end;
+handleCommand(["REA", "FD", FD, "SIZE", Size], St) ->
+    case clientstate:get_file(FD, St) of
+    notopen -> {St, getanswer(badfd)};
+    File -> 
+         case fs:read(File, Size) of
+         {ok, Data} ->
+            Data2=prepend_if_not_empty(<<" ">>, Data),
+            {St, [<<"OK SIZE ">>,cmd:toBin(byte_size(Data), int), Data2]};
+         {Error, _} -> {St, getanswer(Error)}
+         end
+    end;
+handleCommand(["REA2", "FD", FD, "OFFSET", Offset, "SIZE", Size], St) ->
+    case clientstate:get_file(FD, St) of
+    notopen -> {St, getanswer(badfd)};
+    File -> 
+         case fs:read(File, Offset, Size) of
+         {ok, Data} ->
+            Data2=prepend_if_not_empty(<<" ">>, Data),
+            {St, [<<"OK SIZE ">>,cmd:toBin(byte_size(Data), int), Data2]};
+         {Error, _} -> {St, getanswer(Error)}
+         end
+    end;
+handleCommand(["MV", Src, Dst], St) ->
+    {St, getanswer(fs:rename(Src, Dst))};
+handleCommand(["CLO", "FD", FD], St) ->
+    case clientstate:get_file(FD, St) of
+    notopen -> {St, getanswer(badfd)};
+    File -> {clientstate:close_file(FD), getanswer(fs:close(File))}
+    end;
+handleCommand(_, St) -> {St, getanswer(badcmd)}.
+
+
+%util functions
+iso_8601_fmt(DateTime) ->
+    {{Year,Month,Day},{Hour,Min,Sec}} = DateTime,
+    io_lib:format("~4.10.0B-~2.10.0B-~2.10.0B ~2.10.0B:~2.10.0B:~2.10.0B",
+        [Year, Month, Day, Hour, Min, Sec]).
+crop_extra_data(Data, Size) ->
+    case Size < byte_size(Data) of
+    true -> binary:part(Data, 0, Size);
+    false -> Data
+    end.
+prepend_if_not_empty(ToAdd, Data) ->
+    case byte_size(Data) of
+    0 -> [];
+    _ -> [ToAdd,Data]
+    end.
+

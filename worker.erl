@@ -99,8 +99,8 @@ handler(St) ->
                     handler(workerstate:reset_start_time(workerstate:set_prv(PrvN, workerstate:set_nxt(NxtN, St))))
             end;
         ["CON"] ->%es un cliente
-            Pid=spawn(fun() -> cliente:handler(S) end),
-            gen_tcp:controlling_process(S,Pid),
+            Pid=spawn(fun() -> cliente:handler(clientstate:create(S)) end),
+            gen_tcp:controlling_process(S, Pid),
             ?INFO("Accepted client"),
             handler(workerstate:add_client(Pid, St));
         %aqui llegan los mensajes de anillos ya destruidos(descartados):
