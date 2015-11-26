@@ -28,10 +28,10 @@ test:
 telnet:
 	@$(PYTHON) clients/cawtelnet.py
 
-ifndef folder
-folder := client
-endif
 fuse:
+	ifndef folder
+	folder := client
+	endif
 	@mkdir -p $(folder)
 	@$(PYTHON) clients/cawfuse.py $(folder)
 

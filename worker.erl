@@ -11,20 +11,20 @@
 -define(PACKET_TYPE, {packet, 4}).
 -define(DEFFOLDER, "server").
 
--define(DOCONTINUE, server(St) ).
--define(DORESET, restart_server(St) ).
+-define(DOCONTINUE, handler(St) ).
+-define(DORESET, restart_worker(St) ).
 
 %prepara/reinicia el worker
-restart_server(St) ->
+restart_worker(St) ->
     [Client!reset || Client <- St#wstate.clients],%avisa a los clientes que se reinicio el anillo
     cache!cleanup,
     {ok, Prv, Nxt}=ring:create(St#wstate.port),
     ?INFO("Ring created"), 
 	filesystem!dosanitycheck,
-    server(workerstate:reset_start_time(workerstate:set_prv(Prv, workerstate:set_nxt(Nxt, workerstate:set_leader(St))))).
+    handler(workerstate:reset_start_time(workerstate:set_prv(Prv, workerstate:set_nxt(Nxt, workerstate:set_leader(St))))).
     
 %recibe todos los mensajes del worker
-server(St) ->
+handler(St) ->
     {MyId, Prv, Nxt} = {St#wstate.id, St#wstate.prv, St#wstate.nxt},
     receive
     {udp,_,_,_,B} ->
@@ -36,7 +36,7 @@ server(St) ->
             continue -> ?DOCONTINUE;
             {ok, PrvN, NxtN} ->
 				?INFO("Joined to server ~p at port ~p", [Id, Port]),
-                server(workerstate:reset_start_time(workerstate:set_prv(PrvN, workerstate:set_nxt(NxtN, workerstate:unset_leader(St)))))
+                handler(workerstate:reset_start_time(workerstate:set_prv(PrvN, workerstate:set_nxt(NxtN, workerstate:unset_leader(St)))))
             end;
         _ -> ?DOCONTINUE
         end;
@@ -46,7 +46,7 @@ server(St) ->
         ["SETPRV",Ip,Port] ->
             case ring:setPrv(Ip, Port, Prv) of
                 continue -> ?DOCONTINUE;
-                {ok,PrvN} ->  server(workerstate:reset_start_time(workerstate:set_prv(PrvN, St)))
+                {ok,PrvN} ->  handler(workerstate:reset_start_time(workerstate:set_prv(PrvN, St)))
             end;
         ["FS", MyId, _, Cmd, {Client, Args}] ->
             spawn(fun() ->
@@ -71,7 +71,7 @@ server(St) ->
         end;
     {makepaq, Client, Cmd, Args} ->
         Client!cmd:make(["FS", MyId, St#wstate.numpaq, Cmd, {Client, Args}]),
-        server(workerstate:increment_numpaq(St));
+        handler(workerstate:increment_numpaq(St));
     {send, Data} ->
         TimeElapsed=erlang:convert_time_unit(erlang:monotonic_time()-St#wstate.start_time, native, milli_seconds),
         case TimeElapsed>=?SETUP_TIME of
@@ -96,17 +96,17 @@ server(St) ->
                 reset -> ?DORESET;
                 {ok, PrvN, NxtN} -> 
                     ?INFO("Worker accepted"),
-                    server(workerstate:reset_start_time(workerstate:set_prv(PrvN, workerstate:set_nxt(NxtN, St))))
+                    handler(workerstate:reset_start_time(workerstate:set_prv(PrvN, workerstate:set_nxt(NxtN, St))))
             end;
         ["CON"] ->%es un cliente
             Pid=spawn(fun() -> cliente:handler(S) end),
             gen_tcp:controlling_process(S,Pid),
             ?INFO("Accepted client"),
-            server(workerstate:add_client(Pid, St));
+            handler(workerstate:add_client(Pid, St));
         %aqui llegan los mensajes de anillos ya destruidos(descartados):
         _ -> gen_tcp:close(S), ?DOCONTINUE
         end;
-    {client_closed, Pid} -> ?INFO("Client disconnected"), server(workerstate:remove_client(Pid, St));
+    {client_closed, Pid} -> ?INFO("Client disconnected"), handler(workerstate:remove_client(Pid, St));
     {tcp_closed, Nxt} -> gen_tcp:close(Prv), ?DORESET;
     {tcp_closed, Prv} -> gen_tcp:close(Nxt), ?DORESET;
     {tcp_closed, _} -> ?DOCONTINUE;
@@ -158,7 +158,7 @@ start(MyPort, Folder) when is_integer(MyPort)->
     {ok,UDP} = gen_udp:open(?UDPPORT, [binary, {reuseaddr,true}, {active,true},  {ip, ?MULTICAST}, {add_membership, {?MULTICAST, {0,0,0,0}}}]),
     register(announcer, spawn_link(fun() -> announce(UDP, MyId, Port, false) end)),
     ?INFO("Starting worker at port ~p with id ~p, using storage folder ~p", [Port, MyId, Folder]),
-    restart_server(workerstate:create(MyId, Port)).
+    restart_worker(workerstate:create(MyId, Port)).
 
 usage() ->
     io:format(

@@ -24,7 +24,7 @@ info("OPN") -> [string];
 info("WRT") -> [string, int, string, int, binary];
 info("WRT2") -> [string, int, int, binary];
 info("REA") -> [string, int, string, int];
-info("REA2") -> [string, int, int];
+info("REA2") -> [string, int, string, int, string, int];
 info("MV") -> [string, string];
 info("CLO") -> [string, int];
 info("BYE") -> [].

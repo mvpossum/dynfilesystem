@@ -1,2 +1,14 @@
 -Announce random worker
--Informe
+-Test cases
+-cln state 
+-Rename workerstate to wrkstate
+-separar comunicacion (tcp/udp) en otro modulo?
+-Fix fuse
+-Informe, debe contener:
+    -organizacion por modulos
+    -parseo de comandos
+    -fs: procesar, send 
+    -anillos: proceso
+    -Concurrencia (lockedfiles y otros estados)
+    -Casos especiales: cache
+    -wait time estabilidad

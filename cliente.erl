@@ -44,7 +44,6 @@ handler(S, OFiles) ->
         case cmd:parse(B) of
         ["LSD"] -> 
             List=fs:lsd(),
-            ?DP(List),
             gen_tcp:send(S, string:join(["OK"|List], " ")), 
             handler(S, OFiles);
         ["STAT", File] -> 
@@ -96,14 +95,18 @@ handler(S, OFiles) ->
                  {Error, _} -> gen_tcp:send(S, getanswer(Error))
                  end
             end, handler(S, OFiles);
-        ["REA2", Name, Size, Offset] ->
-			 case fs:read(Name, Size, Offset) of
-			 {ok, Data} ->
-				Data2=case byte_size(Data) of 0 ->  []; _ -> [<<" ">>,Data] end,
-				Ans=[<<"OK SIZE ">>,cmd:toBin(byte_size(Data), int), Data2],
-				gen_tcp:send(S, Ans);
-			 {Error, _} -> gen_tcp:send(S, getanswer(Error))
-			 end, handler(S, OFiles);
+        ["REA2", "FD", FD, "OFFSET", Offset, "SIZE", Size] ->
+            case maps:is_key(FD, OFiles) of
+            false -> gen_tcp:send(S, getanswer(badfd));
+            true ->
+                 case fs:read(maps:get(FD, OFiles), Offset, Size) of
+                 {ok, Data} ->
+                    Data2=case byte_size(Data) of 0 ->  []; _ -> [<<" ">>,Data] end,
+                    Ans=[<<"OK SIZE ">>,cmd:toBin(byte_size(Data), int), Data2],
+                    gen_tcp:send(S, Ans);
+                 {Error, _} -> gen_tcp:send(S, getanswer(Error))
+                 end
+            end, handler(S, OFiles);
         ["MV", Src, Dst] ->
 			 gen_tcp:send(S, getanswer(fs:rename(Src, Dst))),
 			 handler(S, OFiles);
