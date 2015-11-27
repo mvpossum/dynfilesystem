@@ -1,16 +1,16 @@
 -module(ring).
--export([create/1, addWorker/4, join/5, setPrv/3]).
+-export([create/2, addWorker/4, join/5, setPrv/3]).
 -include("logging.hrl").
 
 -define(TIMEOUT,2000).
 
 -define(PACKET_TYPE, {packet, 4}).
 
-create(MyPort) ->
+create(MyId, MyPort) ->
     {ok, Prv}=gen_tcp:connect("localhost", MyPort, [binary, {active,true}, ?PACKET_TYPE]),
     ok=gen_tcp:send(Prv, cmd:make(["IMNXT"])),
     receive {tcp, Nxt, <<"IMNXT">>} -> ok end,
-    announcer!enable,
+    announcer!{enable, MyId},
     {ok, Prv, Nxt}.
 
 addWorker(NxtN, Port, Prv, Nxt) ->

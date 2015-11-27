@@ -10,9 +10,8 @@ info("SETPRV") -> [ip,int];
 info("OKPRV") -> [];
 info("OKWORK") -> [];
 info("IMNXT") -> [];
-
-%%Comandos Internos
-info("FS") -> [int, int, string, term];
+info("ANNOUNCE") -> [int];
+info("RING") -> [int, int, string, term];
 
 %%Comandos del cliente
 info("CON") -> [];%OJO
@@ -22,8 +21,10 @@ info("DEL") -> [string];
 info("CRE") -> [string];
 info("OPN") -> [string];
 info("WRT") -> [string, int, string, int, binary];
-info("WRT2") -> [string, int, int, binary];
+%es como WRT pero se proporciona un offset, la pos. donde escribir
+info("WRT2") -> [string, int, string, int, string, int, binary];
 info("REA") -> [string, int, string, int];
+%es como REA pero se proporciona un offset, la pos. donde leer
 info("REA2") -> [string, int, string, int, string, int];
 info("MV") -> [string, string];
 info("CLO") -> [string, int];
@@ -58,9 +59,9 @@ parse(B) ->
             parse(binary:part(B, P+1, byte_size(B)-P-1), info(Name), [Name]);
         nomatch -> 
             Name=binary_to_list(B),
-            case info(Name) of [] -> [Name]; _ -> error end
+            case info(Name) of [] -> [Name]; _ -> erlang:error(badarg) end
         end
-    catch _:_ -> error
+    catch _:_ -> {error, B}
     end.
 
 flat(M) ->

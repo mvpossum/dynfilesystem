@@ -17,9 +17,9 @@ port := 0
 endif
 run: cawfs
 ifndef cant
-	@$(ERL) -run worker start $(port) $(folder)
+	@$(ERL) -run main start $(port) $(folder)
 else
-	@for i in {1..$(cant)}; do ($(TERMINAL) -e "$(ERL) -run worker start 0 server.$$i || sleep 1d"&); done
+	@for i in {1..$(cant)}; do ($(TERMINAL) -e "$(ERL) -run main start 0 server.$$i || sleep 1d"&); done
 endif
 
 test:

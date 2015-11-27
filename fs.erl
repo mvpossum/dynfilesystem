@@ -1,22 +1,30 @@
 -module(fs).
 -include("logging.hrl").
 -include("fsstate.hrl").
--export([server/1, lsd/0, stat/1, del/1, create/1, open/1, count/0, write/2, write/3, read/2, read/3, close/1, rename/2]).
-
+-export([start/1, lsd/0, stat/1, del/1, create/1, open/1, count/0, write/2, write/3, read/2, read/3, close/1, rename/2]).
 
 -define(SETUP_TIME, 1000).
 
-%Solicita al worker que cree un paquete y lo envia
-send(Cmd, Args) ->
-    worker!{makepaq, self(), Cmd, Args},
-    receive Paq -> Paq end, send(Paq).
-%Envia un paquete y espera su respuesta (reenvia si hubo error)
-send(Paq) ->
-    worker!{send, Paq},
+start(St) -> Pid = spawn(fun() -> handler(St) end), register(filesystem, Pid), Pid.
+
+%servidor de archivos
+handler(St) ->
     receive
-    {ans, Ans} -> Ans;
-    reset -> timer:apply_after(?SETUP_TIME, ?MODULE, send, [Paq])
+    {ring, Pid, Cmd, Acc} ->%mensaje del anillo
+        {NwSt, Ans} = procesar(Cmd, Acc, St),
+        Pid!Ans,%envia la respuesta al siguiente worker
+        handler(NwSt);
+    {access_state, Func, Pid} -> Pid!{access_state, Func(St)}, handler(St);
+    {clientopened, File} -> handler(fsstate:open_file_client(File, St));
+    {clientclosed, File} -> handler(fsstate:close_file_client(File, St));
+    {set_lockeds, Lockeds} -> handler(fsstate:update_lockeds(Lockeds, St));
+    dosanitycheck -> spawn(fun() -> sanitycheck(St) end), handler(St);
+    Msg -> exit(?ERROR("Unknown Msg: ~p", [Msg]))
     end.
+
+access_state(Func) ->
+    filesystem!{access_state, Func, self()},
+    receive {access_state, Ans} -> Ans end.
 
 cleanup(File) ->%checks if the file is not open by any connected client
 	case isopen_client(File) of
@@ -28,48 +36,30 @@ sanitycheck(St) ->
     lsd(),%one file should be at most in one worker
     lists:foreach(fun cleanup/1, maps:keys(St#fsstate.openlocalfiles)).
     
-%servidor de archivos
-server(St) ->
-    receive
-    {ring, Pid, Cmd, Acc} ->%mensaje del anillo
-        {NwSt, Ans} = procesar(Cmd, Acc, St),
-        Pid!Ans,%envia la respuesta al siguiente worker
-        server(NwSt);
-    {access_state, Func, Pid} -> Pid!{access_state, Func(St)}, server(St);
-    {clientopened, File} -> server(fsstate:open_file_client(File, St));
-    {clientclosed, File} -> server(fsstate:close_file_client(File, St));
-    {set_lockeds, Lockeds} -> server(fsstate:update_lockeds(Lockeds, St));
-    dosanitycheck -> spawn(fun() -> sanitycheck(St) end), server(St);
-    Msg -> exit(?ERROR("Unknown Msg: ~p", [Msg]))
-    end.
-
-access_state(Func) ->
-    filesystem!{access_state, Func, self()},
-    receive {access_state, Ans} -> Ans end.
 
 %Funciones que usa el cliente
-count() -> send("count", 0).
-lsd() -> send("lsd", []).
-exists(File) -> {File, Ret}=send("exists", {File, notfound}), Ret.
+count() -> worker:send_to_ring("count", 0).
+lsd() -> worker:send_to_ring("lsd", []).
+exists(File) -> {File, Ret}=worker:send_to_ring("exists", {File, notfound}), Ret.
 lock(File, Why) ->
     case access_state(fun(St) -> fsstate:why_locked(File, St) end) of
     notlocked ->
         MyId=access_state(fun(St) -> St#fsstate.id end),
-        {File, {MyId, Why, Res}} = send("lock", {File, {MyId, Why, ok}}),
+        {File, {MyId, Why, Res}} = worker:send_to_ring("lock", {File, {MyId, Why, ok}}),
         Res;
     Reason -> {alreadylocked, Reason} 
     end.
-unlock(File) -> send("unlock", File).
+unlock(File) -> worker:send_to_ring("unlock", File).
 del(File) ->
     case lock(File, for_delete) of
     ok ->
-        {File, Res} = send("del", {File, notfound}),
+        {File, Res} = worker:send_to_ring("del", {File, notfound}),
         unlock(File),
         Res;
     {alreadylocked, open} -> isopen;
     _ -> tryagain
     end.
-stat(File) -> {File, Ret}=send("stat", {File, notfound}), Ret.
+stat(File) -> {File, Ret}=worker:send_to_ring("stat", {File, notfound}), Ret.
 
 create(File) -> 
     case lock(File, for_create) of
@@ -87,7 +77,7 @@ create(File) ->
 open(File) ->
     case lock(File, open) of
     ok ->
-        {File, Res} = send("opn", {File, notfound}),
+        {File, Res} = worker:send_to_ring("opn", {File, notfound}),
         case Res of
         ok -> filesystem!{clientopened, File};
         _-> unlock(File)
@@ -100,7 +90,7 @@ open(File) ->
 close(File) ->
     case access_state(fun(St) -> fsstate:why_locked(File, St) end) of
     open -> 
-        {File, Res} = send("clo", {File, notfound}),
+        {File, Res} = worker:send_to_ring("clo", {File, notfound}),
         case Res of
         ok -> filesystem!{clientclosed, File};
         _ -> ok
@@ -116,28 +106,28 @@ close(File) ->
 write(File, Data) ->
     case access_state(fun(St) -> fsstate:why_locked(File, St) end) of
     open -> 
-        {File, Ret, _}=send("wrt", {File, notfound, Data}),
+        {File, Ret, _}=worker:send_to_ring("wrt", {File, notfound, Data}),
         Ret;
     _ -> notopen
     end.
 write(File, Offset, Data) ->
     case access_state(fun(St) -> fsstate:why_locked(File, St) end) of
     open -> 
-        {File, Ret, _}=send("wrt2", {File, notfound, Offset, Data}),
+        {File, Ret, _}=worker:send_to_ring("wrt2", {File, notfound, Offset, Data}),
         Ret;
     _ -> notopen
     end.
 read(File, Size) ->
     case access_state(fun(St) -> fsstate:why_locked(File, St) end) of
     open -> 
-        {File, Ret, _, Data}=send("rea", {File, notfound, Size, <<>>}),
+        {File, Ret, _, Data}=worker:send_to_ring("rea", {File, notfound, Size, <<>>}),
         {Ret, Data};
     _ -> notopen
     end.
 read(File, Offset, Size) ->
     case access_state(fun(St) -> fsstate:why_locked(File, St) end) of
     open -> 
-        {File, Ret, _, _, Data}=send("rea2", {File, notfound, Offset, Size, <<>>}),
+        {File, Ret, _, _, Data}=worker:send_to_ring("rea2", {File, notfound, Offset, Size, <<>>}),
         {Ret, Data};
     _ -> notopen
     end.
@@ -149,7 +139,7 @@ rename(Src, Dst) ->
         ok ->
             case lock(Dst, to_move) of
             ok ->
-                {Src, Dst, Ret}=send("mv", {Src, Dst, notfound}),
+                {Src, Dst, Ret}=worker:send_to_ring("mv", {Src, Dst, notfound}),
                 unlock(Dst),
                 Ret;
             {alreadylocked, open} -> isopen;
@@ -162,8 +152,8 @@ rename(Src, Dst) ->
     {alreadylocked, open} -> isopen;
     _ -> tryagain
     end.
-isopen_client(File) -> {File, Ret}=send("isopn_client", {File, false}), Ret.
-getlockeds() -> send("getlockeds", #{}).
+isopen_client(File) -> {File, Ret}=worker:send_to_ring("isopn_client", {File, false}), Ret.
+getlockeds() -> worker:send_to_ring("getlockeds", #{}).
 
 %procesar recibe el mensaje que llega y el estado. Devuelve el nuevo estado y el mensaje procesado
 procesar("lsd", Acc, St) ->

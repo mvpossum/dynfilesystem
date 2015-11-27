@@ -1,10 +1,9 @@
--Announce random worker
 -Test cases
--separar comunicacion (tcp/udp) en otro modulo?
 -Fix fuse
 -Informe, debe contener:
     -organizacion por modulos
     -parseo de comandos
+    -announcer: udp, pasando responsabilidad
     -fs: procesar, send 
     -anillos: proceso
     -Concurrencia (lockedfiles y otros estados)

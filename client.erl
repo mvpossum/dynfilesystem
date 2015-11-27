@@ -1,7 +1,11 @@
--module(cliente).
+-module(client).
 -include("logging.hrl").
 -include("clientstate.hrl").
--export([handler/1]).
+-export([start/1]).
+
+start(St) ->
+    clientstate:send("OK ID 0", St),
+    spawn(fun() -> handler(St) end).
 
 handler(St) ->
     S = St#cstate.sock,
@@ -93,7 +97,7 @@ handleCommand(["MV", Src, Dst], St) ->
 handleCommand(["CLO", "FD", FD], St) ->
     case clientstate:get_file(FD, St) of
     notopen -> {St, getanswer(badfd)};
-    File -> {clientstate:close_file(FD), getanswer(fs:close(File))}
+    File -> {clientstate:close_file(FD, St), getanswer(fs:close(File))}
     end;
 handleCommand(_, St) -> {St, getanswer(badcmd)}.
 

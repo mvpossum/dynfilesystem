@@ -1,4 +1,3 @@
-
 -record(wstate, {prv,
                  nxt,
                  id,
