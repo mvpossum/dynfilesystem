@@ -41,7 +41,7 @@ handleCommand(["LSD"], St) ->
     {St, string:join(["OK"|List], " ")};
 handleCommand(["STAT", File], St) ->
     case fs:stat(File) of
-    notfound -> getanswer(notfound);
+    notfound -> {St, getanswer(notfound)};
     {Size, Atime, Mtime, Ctime} ->
         {St, ["OK SIZE ",integer_to_list(Size)," ACCESS ",iso_8601_fmt(Atime)," MODIFY ",iso_8601_fmt(Mtime)," CREATE ",iso_8601_fmt(Ctime)]}
     end;
@@ -63,7 +63,7 @@ handleCommand(["WRT", "FD", FD, "SIZE", Size, Data], St) ->
         DataCrop=crop_extra_data(Data, Size),
         {St, getanswer(fs:write(File, DataCrop))}
     end;
-handleCommand(["WRT2", "FD", FD, "SIZE", Size, "OFFSET", Offset, Data], St) ->
+handleCommand(["WRT2", "FD", FD, "OFFSET", Offset, "SIZE", Size, Data], St) ->
     case clientstate:get_file(FD, St) of
     notopen -> {St, getanswer(badfd)};
     File -> 
@@ -99,7 +99,7 @@ handleCommand(["CLO", "FD", FD], St) ->
     notopen -> {St, getanswer(badfd)};
     File -> {clientstate:close_file(FD, St), getanswer(fs:close(File))}
     end;
-handleCommand(_, St) -> {St, getanswer(badcmd)}.
+handleCommand(Msg, St) -> {St, getanswer(badcmd)}.
 
 
 %util functions

@@ -12,9 +12,7 @@ BEAM_FILES := $(ERL_FILES:.erl=.beam)
 	
 cawfs: $(BEAM_FILES)
 	
-ifndef port
-port := 0
-endif
+port = 0
 run: cawfs
 ifndef cant
 	@$(ERL) -run main start $(port) $(folder)
@@ -28,16 +26,14 @@ test:
 telnet:
 	@$(PYTHON) clients/cawtelnet.py
 
+mount = client
 fuse:
-	ifndef folder
-	folder := client
-	endif
-	@mkdir -p $(folder)
-	@$(PYTHON) clients/cawfuse.py $(folder)
+	@mkdir -p $(mount)
+	@$(PYTHON) clients/cawfuse.py $(mount)
 
 kill:
 	killall xterm
 	
 .PHONY: clean
 clean:
-	rm -rf *.beam erl_crash.dump clients/*.pyc clients/__pycache__
+	rm -rf *.beam erl_crash.dump clients/*.pyc clients/__pycache__ server* client/

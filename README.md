@@ -35,5 +35,6 @@ To run the tests (the server must be running)
 
 To mount it (using FUSE):
 
-> make fuse folder=client
+> make fuse mount=client
+
 

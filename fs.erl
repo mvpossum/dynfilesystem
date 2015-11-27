@@ -113,7 +113,7 @@ write(File, Data) ->
 write(File, Offset, Data) ->
     case access_state(fun(St) -> fsstate:why_locked(File, St) end) of
     open -> 
-        {File, Ret, _}=worker:send_to_ring("wrt2", {File, notfound, Offset, Data}),
+        {File, Ret, _, _}=worker:send_to_ring("wrt2", {File, notfound, Offset, Data}),
         Ret;
     _ -> notopen
     end.

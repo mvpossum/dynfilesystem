@@ -1,6 +1,7 @@
 import struct
 import socket
 import re
+from errno import *
 from threading import Lock
 
 def discover():
@@ -34,7 +35,7 @@ class CawSock:
         while totalsent < len(tosend):
             sent = self.sock.send(tosend[totalsent:])
             if sent == 0:
-                raise OSError("Couldn't send message (probably worker crashed)")
+                raise OSError(errnoECONNRESET)
             totalsent = totalsent + sent
             
     def raw_recv(self, tam):
@@ -43,7 +44,7 @@ class CawSock:
         while bytes_recd < tam:
             chunk = self.sock.recv(min(tam - bytes_recd, 32768))
             if chunk == b'':
-                raise OSError("Packet not received correctly (probably worker crashed)")
+                raise OSError(ECONNRESET)
             chunks.append(chunk)
             bytes_recd = bytes_recd + len(chunk)
         return b''.join(chunks)
@@ -52,7 +53,7 @@ class CawSock:
         (tam,)=struct.unpack('>I', self.raw_recv(4))
         return self.raw_recv(tam)
     
-    def cmd(self, msg):
+    def cmdbin(self, msg):
         if isinstance(msg, str):
             msg=bytearray(msg, 'ascii')
         with self.lock:
@@ -60,24 +61,32 @@ class CawSock:
             return self.receive()
             
     def cmdstr(self, msg):
-        return self.cmd(msg).decode()
+        return self.cmdbin(msg).decode()
         
     def close(self):
         self.sock.close()
         
 class CawTerminal:
+    conans=re.compile("OK ID (\d+)")
     def __init__(self):
+        self.lock = Lock()
         self.s=CawSock()
         (self.ip, self.port) = discover()
         self.s.connect((self.ip, self.port))
         print("Connected at %s in port %s!" % (self.ip, self.port))
-        self.send_print("CON")
+        ans=self.send_print("CON")
+        if not self.conans.match(ans):
+            raise OSError(ECONNREFUSED)
     
     def send(self, cmd):
         return self.s.cmdstr(cmd)
+        
+    def send_bin(self, cmd):
+        return self.s.cmdbin(cmd)
     
     def send_print(self, cmd):
-        print(cmd)
-        ans=self.send(cmd)
-        print(ans)
-        return ans
+        with self.lock:
+            print(cmd)
+            ans=self.send(cmd)
+            print(ans)
+            return ans
