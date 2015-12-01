@@ -1,0 +1,444 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish]{babel}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{url}
+\usepackage{tikz}
+\usepackage{textcomp}
+\usetikzlibrary{babel}
+\usetikzlibrary{arrows} 
+\usetikzlibrary{decorations.markings}
+\usetikzlibrary{matrix,positioning,calc}
+\usetikzlibrary{decorations.pathmorphing}
+\tikzset{
+    %Define standard arrow tip
+    >=stealth',
+    %Define style for boxes
+    punkt/.style={
+           rectangle,
+           rounded corners,
+           draw=black, very thick,
+           text width=6.5em,
+           minimum height=2em,
+           text centered},
+    % Define arrow style
+    pil/.style={
+           ->,
+           thick,
+           shorten <=2pt,
+           shorten >=2pt,}
+}
+\makeatletter \g@addto@macro\@floatboxreset\centering \makeatother
+\begin{document}
+
+\begin{titlepage}
+
+\newcommand{\HRule}{\rule{\linewidth}{0.5mm}} % Defines a new command for the horizontal lines, change thickness here
+
+\center % Center everything on the page
+ 
+%----------------------------------------------------------------------------------------
+%   HEADING SECTIONS
+%----------------------------------------------------------------------------------------
+
+\textsc{\LARGE Universidad Nacional de Rosario}\\[0.5cm] % Name of your university/college
+\textsc{\Large Ciencias de la Computación}\\[1.5cm] % Major heading such as course name
+\textsc{\Large Sistemas Operativos I}\\[0.5cm] % Major heading such as course name
+\textsc{\large Trabajo Final - Sistema de archivos distribuido}\\[0.5cm] % Minor heading such as course title
+
+%----------------------------------------------------------------------------------------
+%   TITLE SECTION
+%----------------------------------------------------------------------------------------
+
+\HRule \\[0.4cm]
+{ \huge \bfseries INVENTAR NOMBRE}\\[0.4cm] % Title of your document
+\HRule \\[1.5cm]
+ 
+%----------------------------------------------------------------------------------------
+%   AUTHOR SECTION
+%----------------------------------------------------------------------------------------
+
+%\begin{minipage}{0.4\textwidth}
+%\begin{flushleft} \large
+%\emph{Autor}\\
+%\textsc{Martín Villagra} % Your name
+%\end{flushleft}
+%\end{minipage}
+
+%\begin{minipage}{0.4\textwidth}
+%\begin{flushright} \large
+%\emph{Supervisor} \\
+%Dr. James \textsc{Smith} % Supervisor's Name
+%\end{flushright}
+%\end{minipage}\\[2cm]
+
+% If you don't want a supervisor, uncomment the two lines below and remove the section above
+\Large \emph{Autor}\\
+\textsc{Martín Villagra}\\[2cm] % Your name
+
+%----------------------------------------------------------------------------------------
+%   DATE SECTION
+%----------------------------------------------------------------------------------------
+
+{\large \today}\\[1cm] % Date, change the \today to a set date if you want to be precise
+
+%----------------------------------------------------------------------------------------
+%   LOGO SECTION
+%----------------------------------------------------------------------------------------
+
+\includegraphics[width=4cm]{logo-unr.png}\\[1cm] % Include a department/university logo - this will require the graphicx package
+ 
+%----------------------------------------------------------------------------------------
+
+\vfill % Fill the rest of the page with whitespace
+
+\end{titlepage}
+
+\section{Introducción}
+Se presenta un sistema de archivos distribuido totalmente descentralizado escrito en Erlang, junto con detalles de su funcionamiento. El mismo se diseñó para que requiera la mínima intervención del usuario para configurarse.
+
+\section{Topología}
+El sistema que aquí se muestra es diferente al diseño sugerido en el enunciado. Si bien los nodos\footnote{En nuestro sistema tomaremos nodo y worker como sinónimos.} se siguen comunicando en forma de anillo, cada uno cuenta con un socket por el cual los clientes se conectan y no existe el dispatcher. En particular cada nodo tiene dos conexiones TCP, una al nodo anterior (Prv) y otra al siguiente (Nxt).\\
+
+
+\begin{center}
+\begin{tikzpicture}[thick,draw=black!80]
+    \tikzstyle{neuron}=[circle,fill=black!25,minimum size=25pt,thick,inner sep=1pt]
+    \tikzstyle{input neuron}=[neuron, fill=green!50, draw=black!60!green];
+    \tikzstyle{output neuron}=[neuron, fill=red!50, draw=black!60!red];
+    \tikzstyle{hidden neuron}=[neuron, fill=blue!50, draw=black!60!blue];
+	\tikzset{every loop/.style={min distance=20mm,in=50,out=130, looseness=2}}
+    \node[hidden neuron] (N1) [label=-85:{\footnotesize Prv}, label=85:{\footnotesize Nxt}] {\small Worker};
+    \node[hidden neuron] (N2) [label=185:{\footnotesize Prv}, label=-5:{\footnotesize Nxt}, above right=1.5cm and 1.5cm of N1] {\small Worker};
+    \node[hidden neuron] (N3) [label=95:{\footnotesize Prv}, label=-95:{\footnotesize Nxt}, below right=1.5cm and 1.5cm of N2] {\small Worker};
+    \node[hidden neuron] (N4) [label=175:{\footnotesize Nxt}, label=5:{\footnotesize Prv}, below left=1.5cm and 1.5cm of N3] {\small Worker};
+    \path[->,black!50!blue,ultra thick] (N1) edge (N2)
+    	      (N2) edge (N3) 
+    		  (N3) edge (N4) 
+    		  (N4) edge (N1) ;
+    \node[output neuron] (S1) [left=0.5cm of N1] {\scriptsize Socket};
+    \node[output neuron] (S2) [above=0.5cm of N2] {\scriptsize Socket};
+    \node[output neuron] (S3) [right=0.5cm of N3] {\scriptsize Socket};
+    \node[output neuron] (S4) [below=0.5cm of N4] {\scriptsize Socket};
+    \path[<->] (S1) edge (N1) ;
+    \path[<->] (S2) edge (N2) ;
+    \path[<->] (S3) edge (N3) ;
+    \path[<->] (S4) edge (N4) ;
+    \node[input neuron] (C1) [above right=0.2cm and 1cm of S3] {\scriptsize Cliente};
+    \node[input neuron] (C2) [below right=0.2cm and 1cm of S3] {\scriptsize Cliente};
+    \node[input neuron] (C3) [left=1cm of S1] {\scriptsize Cliente};
+    \path[<->] (C1) edge (S3) ;
+    \path[<->] (C2) edge (S3) ;
+    \path[<->] (C3) edge (S1) ;
+\end{tikzpicture}
+\end{center}
+
+El sistema \textbf{sólo} está formado por estos workers. Cada nodo consiste en un programa totalmente autónomo.
+
+Como la idea es requerir la mínima intervención del usuario, se utiliza un sistema de ``anillos dinámicos''. 
+Los nodos se detectan entre sí automáticamente y en un tiempo finito forman la topología de anillo deseada.\\
+La idea es que el anillo detecte cuando un nodo se caiga o cuando un nodo quiere incorporarse y el anillo se modifique apropiadamente.
+
+
+
+\begin{center}
+\begin{tikzpicture}[thick,draw=black!80]
+    \tikzstyle{neuron}=[circle,fill=black!25,minimum size=25pt,thick,inner sep=1pt]
+    \tikzstyle{input neuron}=[neuron, fill=green!50, draw=black!60!green];
+    \tikzstyle{output neuron}=[neuron, fill=red!50, draw=black!60!red];
+    \tikzstyle{hidden neuron}=[neuron, fill=blue!50, draw=black!60!blue];
+	\tikzset{every loop/.style={min distance=20mm,in=50,out=130, looseness=2}}
+	
+\tikzset{snake it/.style={-stealth,
+decoration={snake, 
+    amplitude = .4mm,
+    segment length = 2mm,
+    post length=0.9mm
+    },decorate}}
+    
+    
+    \node[hidden neuron] (N1) [label=-88:{\footnotesize Prv}, label=88:{\footnotesize Nxt}] {\small 852};
+    \node[hidden neuron] (N2) [label=185:{\footnotesize Prv}, label=-5:{\footnotesize Nxt}, above right=1.5cm and 1.5cm of N1] {\small 123};
+    \node[hidden neuron] (N3) [label=92:{\footnotesize Prv}, label=-92:{\footnotesize Nxt}, below right=1.5cm and 1.5cm of N2] {\small 543};
+    \node[hidden neuron] (N4) [label=175:{\footnotesize Nxt}, label=5:{\footnotesize Prv}, below left=1.5cm and 1.5cm of N3] {\small 42};
+    \path[->,black!50!blue,ultra thick] (N1) edge (N2) 
+    		  (N2) edge (N3) ;
+    \path[->,gray!80!blue,thick] (N3) edge (N4) 
+              (N4) edge (N1) ;
+\draw[red,ultra thick] (1.6,-1.5) -- (2.8,-2.8);
+\draw[red,ultra thick] (1.6,-2.8) -- (2.8,-1.5);
+
+\draw[black, snake it] (5.5,0.0) -- (7.5,0.0);
+
+    \node[hidden neuron] (N5) [right=3cm of N3, label=-88:{\footnotesize Prv}, label=88:{\footnotesize Nxt}] {\small 123};
+    \node[hidden neuron] (N6) [label=185:{\footnotesize Prv}, label=-5:{\footnotesize Nxt}, above right=1.5cm and 1.5cm of N5] {\small 852};
+    \node[hidden neuron] (N7) [label=92:{\footnotesize Prv}, label=-92:{\footnotesize Nxt}, below right=1.5cm and 1.5cm of N6] {\small 543};
+    \path[->,black!50!blue,ultra thick] 
+    		  (N5) edge (N6) 
+              (N6) edge (N7) 
+              (N7) edge (N5) ;
+
+\end{tikzpicture}
+\end{center}
+
+Esto da lugar a una gran flexibilidad y reduce la configuración del sistema a casi nula. De hecho para ejecutar tanto el servidor como el cliente no es necesario ningún argumento.
+
+\subsection{Funcionamiento}
+Inicialmente cada nodo genera para sí mismo un \emph{ID} aleatorio con el cual identificarse que no va a cambiar. A fines prácticos se va a suponer que nunca hay dos nodos con el mismo \emph{ID}.
+
+Como al iniciar todavía no sabe nada del sistema\footnote{fuera de saber que está siendo ejecutado}, supone que es el único en la red y crea un anillo donde él es el único que pertenece (auto ciclo). Si bien esto parece absurdo, permite crear un invariante: un nodo está siempre en un anillo.\\
+
+\begin{center}
+\begin{tikzpicture}[shorten >=1pt,->,draw=black!80]
+    \tikzstyle{every pin edge}=[<-,shorten <=1pt,]
+    \tikzstyle{neuron}=[circle,fill=black!25,minimum size=25pt,thick,inner sep=1pt]
+    \tikzstyle{input neuron}=[neuron, fill=green!50, draw=black!60!green];
+    \tikzstyle{output neuron}=[neuron, fill=red!50, draw=black!60!red];
+    \tikzstyle{hidden neuron}=[neuron, fill=blue!50, draw=black!60!blue];
+	\tikzset{every loop/.style={min distance=20mm,in=50,out=130, looseness=2}}
+    \node[hidden neuron] (N1) [label=175:{\footnotesize Prv}, label=5:{\footnotesize Nxt}] {123};
+    \path[->,black!50!blue,ultra thick] (N1) edge [loop] node {} ();
+    \node[hidden neuron] (N2) [label=175:{\footnotesize Prv}, label=5:{\footnotesize Nxt}, right=4cm of N1] {457};
+    \path[->,black!50!blue,ultra thick] (N2) edge [loop] node {} ();
+\end{tikzpicture}
+\end{center}
+
+Cada anillo va a poseer un líder, el cual será el nodo con mayor \emph{ID}. También hay un encargado de anunciar el anillo, el vocero. El vocero envía periódicamente un paquete multicast UDP\footnote{\url{https://en.wikipedia.org/wiki/Multicast#IP_multicast}} informando la existencia del anillo, junto con el \emph{ID} de su líder y como incorporarse al mismo. El vocero a su vez recibe los nodos y clientes que quieran comunicarse con el anillo. El rol de vocero está simbolizado en el dibujo por quien tiene el megáfono. El megáfono va a ser periódicamente pasado como si fuera un token al siguiente en el anillo cada vez que un cliente se conecte, distribuyendo los clientes entre los workers.\\
+
+
+\begin{center}
+\begin{tikzpicture}[shorten >=1pt,->,draw=black!80]
+    \tikzstyle{every pin edge}=[<-,shorten <=1pt,]
+    \tikzstyle{neuron}=[circle,fill=black!25,minimum size=25pt,thick,inner sep=1pt]
+    \tikzstyle{input neuron}=[neuron, fill=green!50, draw=black!60!green];
+    \tikzstyle{output neuron}=[neuron, fill=red!50, draw=black!60!red];
+    \tikzstyle{hidden neuron}=[neuron, fill=blue!50, draw=black!60!blue];
+	\tikzset{every loop/.style={min distance=20mm,in=50,out=130, looseness=2}}
+	
+    \node[hidden neuron] (N1) [label=-88:{\footnotesize Prv}, label=88:{\footnotesize Nxt}] {\small 852};
+    \node[hidden neuron] (N2) [label=185:{\footnotesize Prv}, label=-5:{\footnotesize Nxt}, above right=1.5cm and 1.5cm of N1] {\small 123};
+    \node[hidden neuron] (N3) [label=92:{\footnotesize Prv}, label=-92:{\footnotesize Nxt}, below right=1.5cm and 1.5cm of N2] {\small 543};
+    \node[hidden neuron] (N4) [label=175:{\footnotesize Nxt}, label=5:{\footnotesize Prv}, below left=1.5cm and 1.5cm of N3] {\small 42};
+    \path[->,black!50!blue,ultra thick]
+    		  (N1) edge (N2) 
+    		  (N2) edge (N3) 
+    	      (N3) edge (N4) 
+              (N4) edge (N1) ;
+    \node[inner sep=0] (mega) [above right=-3mm and -6mm of N3] {\includegraphics[width=50pt]{megaphone.png}};
+    \node[align=left] (anuncio) [above right=-10mm and 0mm of mega] { Unanse al líder 852!\\ \scriptsize Pueden conectarse a 192.168.0.5\\ \scriptsize por el puerto 2349};
+    
+             
+\end{tikzpicture}
+\end{center}
+
+Los nodos prefieren estar con líderes con \emph{ID}s más grandes. Cada nodo va a estar permanentemente escuchando por mensajes que anuncien anillos nuevos. \textbf{Si un nodo detecta un anillo cuyo líder posee un \emph{ID} más grande que el de el líder del anillo actual entonces abandona su anillo y procede a unirse al anillo detectado.}
+
+Este último comportamiento junto con la únicidad de los \emph{ID}s asegura que luego de un tiempo va a haber un único anillo conformado por todos los nodos en la red.
+
+Si por alguna razón algún nodo se desconecta de sus vecinos, los vecinos proceden a desconectarse de sus otros vecinos y vuelven al estado inicial\footnote{Cada nodo vuelve a formar el auto ciclo, pero las conexiones con el cliente, los archivos abiertos y demases estados no se reinician.}. Se genera un comportamiento en cascada donde el anillo entero se rompe y todos los nodos quedan en el estado inicial, que conduce a que el anillo se forme nuevamente.
+
+La simpleza del sistema descripto tiene la ventaja de que la única operación importante que debemos implementar es adicionar un worker al anillo, la cual se verá a continuación.
+
+\subsubsection{Protocolo para unirse} 
+
+Existen tres nodos involucrados en el proceso \textbf{P}, \textbf{N} y \textbf{W}. Aquí \textbf{W} quiere incorporarse al anillo de \textbf{P} y \textbf{N}, estableciendo una conexión primero con \textbf{P}.\\
+Básicamente el procedimiento es:
+\begin{enumerate}
+\item \textbf{W} le dice a \textbf{P} que 
+quiere unirse entre \textbf{P} y \textbf{N}. \item Luego \textbf{P} le dice a \textbf{N} que ponga a \textbf{W} como su anterior (Prv).
+\item \textbf{N} informa a \textbf{W} de la conexión y este lo pone como su siguiente (Nxt).
+\item Por último se establece el enlace entre \textbf{W} y \textbf{P}.
+\end{enumerate}
+\begin{center}
+\begin{tikzpicture}[shorten >=1pt,->,draw=black!80]
+    \tikzstyle{every pin edge}=[<-,shorten <=1pt,]
+    \tikzstyle{neuron}=[circle,fill=black!25,minimum size=25pt,thick,inner sep=1pt]
+    \tikzstyle{input neuron}=[neuron, fill=green!50, draw=black!60!green];
+    \tikzstyle{output neuron}=[neuron, fill=red!50, draw=black!60!red];
+    \tikzstyle{hidden neuron}=[neuron, fill=blue!50, draw=black!60!blue];
+	\tikzset{every loop/.style={min distance=20mm,in=50,out=130, looseness=2}}
+\tikzset{snake it/.style={-stealth,
+decoration={snake, 
+    amplitude = .4mm,
+    segment length = 2mm,
+    post length=1mm
+    },decorate}}
+	
+\draw[black, thick,snake it] (-4.0,-2.0) -- node[above] {1. \emph{WORK}} ++ (2.5,0.0) ;
+
+    \node[hidden neuron] (P) [label=-88:{\footnotesize Nxt}] {\small P};
+            
+    \node (OT1) [below left=0.5 and 1.cm of P]{\LARGE ...};
+    
+    \node[hidden neuron] (N) [label=170:{\footnotesize Prv}, below right=1.5cm and 1.5cm of P] {\small N};
+    
+    \node (OT2) [below left=1.cm and 0.5cm of N] {\LARGE ...};
+    \node[hidden neuron] (W) [ above right =1.5cm  and 0cm of N] {\small W};
+    \path[->,black!50!blue,ultra thick]
+    		  (OT1) edge (P) 
+    		  (P) edge (N) 
+    	      (N) edge (OT2);
+    \path[-,gray!50!blue,dashed]
+    		(P) edge (W);
+    
+    
+\draw[black, thick,snake it] (4.,-2.0) -- node[above] {2. \emph{SETPRV}} ++ (2.5,0.0) ;
+
+
+    \node[hidden neuron] (P2) [label=-88:{\footnotesize Nxt}, right =8cm of P] {\small P};
+    
+    \node (OT3) [below left=0.5 and 1.cm of P2]{\LARGE ...};
+    
+    \node[hidden neuron] (N2) [label=60:{\footnotesize Prv}, below right=1.5cm and 1.5cm of P2] {\small N};
+    \node (OT4) [below left=1.cm and 0.5cm of N2] {\LARGE ...};
+    \node[hidden neuron] (W2) [ above right =1.5cm  and 0cm of N2] {\small W};
+    
+    \path[->,black!50!blue,ultra thick]
+    		  (OT3) edge (P2) 
+    		  (P2) edge (N2) 
+    	      (N2) edge (OT4);
+    	      
+    \path[->,black!50!blue,ultra thick] (W2) edge (N2);   
+    \path[-,gray!50!blue,dashed]
+    		(P2) edge (W2);
+    
+\draw[black, thick,snake it] (-4.0,-7.0) -- node[above] {3. \emph{OKPRV}} ++ (2.5,0.0) ;
+    
+       
+    \node[hidden neuron] (P3) [label=-88:{\footnotesize Nxt}, below =4cm of P] {\small P};
+    
+    \node (OT5) [below left=0.5 and 1.cm of P3]{\LARGE ...};
+    
+    \node[hidden neuron] (N3) [label=60:{\footnotesize Prv}, below right=1.5cm and 1.5cm of P3] {\small N};
+    \node (OT6) [below left=1.cm and 0.5cm of N3] {\LARGE ...};
+    \node[hidden neuron] (W3) [label=-87:{\footnotesize Nxt}, above right =1.5cm  and 0cm of N3] {\small W};
+    \path[->,black!50!blue,ultra thick]
+    		  (OT5) edge (P3) 
+    		  (P3) edge (N3) 
+    	      (N3) edge (OT6);
+    	      
+    \path[->,black!50!blue,ultra thick] (W3) edge (N3);  
+    \path[-,gray!50!blue,dashed]
+    		(P3) edge (W3);
+    
+\draw[black, thick,snake it] (4.0,-7.0) -- node[above] {4. \emph{OKWORK}} ++ (2.5,0.0) ;
+
+    \node[hidden neuron] (P4) [label=5:{\footnotesize Nxt}, right =8cm of P3] {\small P};
+    
+    \node (OT7) [below left=0.5 and 1.cm of P4]{\LARGE ...};
+    
+    \node[hidden neuron] (N4) [label=60:{\footnotesize Prv}, below right=1.5cm and 1.5cm of P4] {\small N};
+    \node (OT8) [below left=1.cm and 0.5cm of N4] {\LARGE ...};
+    \node[hidden neuron] (W4) [label=-87:{\footnotesize Nxt}, label=175:{\footnotesize Prv}, above right =1.5cm  and 0cm of N4] {\small W};
+    \path[->,black!50!blue,ultra thick]
+    		  (OT7) edge (P4)
+    		  (P4) edge (W4)
+    		  (W4) edge (N4) 
+    	      (N4) edge (OT8);
+    	      
+    \path[->,black!50!blue,ultra thick] (W4) edge (N4);
+\end{tikzpicture}
+\end{center}
+
+Este esquema muestra los mensajes enviados en función del tiempo:
+\begin{center}
+\begin{tikzpicture}
+\tikzset{snake it/.style={-stealth,
+decoration={snake, 
+    amplitude = .4mm,
+    segment length = 2mm,
+    post length=1mm
+    },decorate}}
+    
+\node[] (W) at (0, 0) {W};
+\node[] (P) at (5, 0) {P};
+\node[] (N) at (10, 0) {N};
+\draw[](0, -0.3) -- (0., -5);
+\draw[](5, -0.3) -- (5., -5);
+\draw[](10, -0.3) -- (10., -5);
+\draw[black, thick,snake it] (0,-0.5) -- node[above] {WORK} ++ (5,-0.5) ;
+
+\draw[black, thick,snake it] (5,-1.5) -- node[above] {SETPRV} ++ (5,-0.5) ;
+
+\draw[black, thick,snake it] (10,-2.5) -- node[above left] {OKPRV} ++ (-10,-0.5) ;
+
+\draw[black, thick,snake it] (0,-3.5) -- node[above] {OKWORK} ++ (5,-0.5) ;
+
+\end{tikzpicture}
+\end{center}
+
+Además \emph{WORK} debe contener información de como conectarse a \textbf{W}, así esta le es pasada a \textbf{N} a través de \emph{SETPRV}.
+
+Existen casos especiales que hay que manejar cuando el anillo es de tamaño uno (\textbf{P}=\textbf{N}). También está contemplado cualquier error que pueda ocurrir durante el procedimiento (en cuyo caso se aborta la operación).
+
+\section{Sistema de archivos}
+Una vez establecido el anillo, el sistema distribuido tiene que tener alguna comunicación entre los workers.
+
+Para esto el worker implementa los mensajes de anillo. Un mensaje es iniciado por algún worker y el mismo viaja por todo el anillo en orden secuencial. Cada nodo recibe el mensaje, lo procesa de alguna forma y vuelve a enviarlo al siguiente del anillo. De esta forma al finalizar todos los nodos habrán procesado el mensaje. Cuando el mensaje da una vuelta completa el mismo es devuelto al proceso que creó el mensaje. Esto permite crear ``funciones'' que operan sobre la totalidad de la información del sistema distribuido.
+
+Por ejemplo para el mensaje \emph{lsd}, el worker primero crea el mensaje \{\textquotesingle\textquotesingle lsd\textquotesingle\textquotesingle, $[\;]$\}. Cada nodo que procesa el mensaje agrega a la lista los archivos locales que posea y lo vuelve a reenviar. Así al finalizar el worker recibirá el mensaje \{\textquotesingle\textquotesingle lsd\textquotesingle\textquotesingle, XS\}, con XS conteniendo la lista de todos los archivos globales.
+
+\subsection{Problemas de concurrencia}
+Surgen problemas de concurrencia pues, imaginemos el hecho de que dos workers \emph{A} y \emph{B} intenten abrir el mismo archivo \emph{F} a la vez, que está actualmente cerrado. Cada uno mandaría un mensaje de anillo para ver si alguien tiene abierto a \emph{F}.
+Alguno de los dos tiene que percibir que \emph{F} no estaba abierto. Sin perdida de generalidad suponemos que es \emph{A}. Como \emph{A} percibe que no está abierto, lo abre. El problema está en que \emph{B} no necesariamente percibe que \emph{F} fue abierto por \emph{A}, pues \emph{B} podría haber procesado el mensaje antes de abrir el archivo. Al no percibir que está abierto, lo abre. Esto lleva a un estado erroneo pues \textbf{dos workers tienen abierto el mismo archivo}.
+
+Ocurren cosas similares con otros comandos. Bajo el mismo argumento un archivo podría ser creado en dos workers distintos. Podría hasta abrirse un archivo que justo fue borrado.
+
+\subsection{Solución}
+La idea sería que para realizar cambios en el estado de un archivo\footnote{renombrar, abrir, escribir, crear, borrar, etc}, un worker primero debe adquirir un lock sobre el mismo (incluso si el archivo no existe y se desea crearlo). Mientras se posea un lock ningún otro worker va a poder operar sobre ese archivo. Sólo cuando se obtiene el lock el worker puede operar sobre ese archivo y una vez que termina libera el lock.
+
+Los lista de locks son el único estado global que mantiene cada worker. Los cambios en los locks se tienen que propagar por todos los nodos para mantener esta lista.
+
+\subsubsection{Procedimiento para adquirir un lock}
+Para que el nodo \emph{A} obtenga un lock sobre un archivo primero se fija en la lista de locks que posee. Si no aparece, entonces no está bloqueado y procede a intentar adquirirlo.
+
+
+Para hacerlo envia un mensaje de anillo \emph{M} preguntando a cada nodo si se opone a la adquisión de tal bloqueo y si no, que lo agregue a su lista de locks. Si nadie se opone, el lock se adquiere y todos actualizan sus listas de locks.
+
+
+Si en cambio un nodo \emph{B} recibe este mensaje y se encuentra con que el archivo está bloqueado por otro nodo, la única explicación para esto es que ese lock todavía no había llegado a \emph{A} al momento de emitir \emph{M} (pues sino A hubiera sabido que el lock ya fue adquirido mirando su lista de locks). Es decir estamos en el caso de dos locks que se emitieron `casi` a la vez. En este caso debemos decidir cual va a prevalecer y elegimos que prevalezca el lock proveniente del worker con \emph{ID} más grande, descartando el otro.
+
+Este comportamiento nos asegura que el lock va a ser dado a exactamente un worker:
+\begin{itemize}
+\item El de \emph{ID} más grande va a recibir que su lock fue aceptado, pues si no, significaría que otro worker con mayor ID ya obtuvo ese lock recientemente, lo cual es imposible porque no existe.
+\item Los nodos con \emph{ID}s más chicos van a recibir que su lock fue denegado, pues si no es denegado significaría que el de ID más grande no se opuso a la petición lo cual significaría que no intento adquirir el lock recientemente.
+\end{itemize}
+El estado global de los nodos queda consistente, pues el mensaje del de \emph{ID} más grande va a reemplazar de la lista de locks de cada uno de los workers lo que modificaron los mensajes de los de \emph{ID}s más pequeños.
+
+Este sistema tiene semejanzas con el protocolo de commit en dos fases\footnote{\url{https://en.wikipedia.org/wiki/Two-phase_commit_protocol}} en el sentido de que hay una votación para modificar el estado global (los archivos bloqueados). Pero la diferencia está en que no se necesario deshacer los cambios de las operaciones fallidas.
+
+
+\section{Código}
+El código del servidor y de los clientes está disponible en el respositorio:
+
+\url{http://dcc.fceia.unr.edu.ar:81/svn/lcc/R-322/Alumnos/2015/mvillagra/TrabajoFinal/}
+
+En el archivo \emph{README.md} encontrará información de las dependencias y de como ejecutarlo.
+
+A continuación se detallan los módulos principales por los cual está formado.
+\begin{itemize}
+\item \textbf{main.erl}
+Contiene la entrada principal, donde se inician todos los procesos y se queda esparando a que haya algún error.
+\item \textbf{worker.erl}
+Es el proceso que recibe los mensajes del anillo y de las nuevas conexiones y los maneja apropiadamente. Su estado y operaciones sobre él están en \emph{workerstate}. También provee una interfaz para mandar un mensaje a través del anillo, que es usada intensivamente por \emph{fs.erl}
+\item \textbf{ring.erl}
+Es un módulo que provee funciones relacionadas al anillo (unirse, incorporar un nodo, crear auto ciclo, etc). Es utilizado sólo por \emph{worker.erl}.
+\item \textbf{fs.erl}
+Es la parte más importante del servidor, aquí se proveen funciones para trabajar con el sistema de archivos. Su estado y operaciones sobre él están en \emph{fsstate}. Trabaja un nivel más arriba que \emph{worker.erl}.
+\item \textbf{client.erl}
+Contiene el handler que recibe los comandos del cliente, los procesa (posiblemente usando \emph{fs.erl}) y genera una respuesta. Trabaja un nivel más arriba que \emph{fs.erl}. Su estado y operaciones sobre él están en \emph{clientstate}.
+\item \textbf{megaphone.erl}
+Ejecuta un proceso que representa el megáfono del vocero. Al iniciar inicializa el socket UDP. Puede ser activado y desactivado.
+\item \textbf{cache.erl}
+Ejecuta un proceso que contiene la cache del worker.
+\item \textbf{cmd.erl}
+Contiene operaciones para parsear los mensajes entrantes y para transformarlos a binario así pueden ser enviados por los sockets. Es utilizado desde el lado del worker y desde el cliente.
+\end{itemize}
+
+%    -fs: procesar, send 
+%    -Concurrencia (lockedfiles y otros estados)
+%    -Casos especiales: cache
+%    -wait time estabilidad
+
+\end{document}
