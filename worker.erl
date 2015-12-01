@@ -16,21 +16,22 @@ start(St) -> Pid = spawn(fun() -> restart(St) end), register(worker, Pid), Pid.
 
 %prepara/reinicia el worker
 restart(St) ->
+    clear_msgs(),
     [Client!reset || Client <- St#wstate.clients],%avisa a los clientes que se reinicio el anillo
     cache!cleanup,
-    {ok, Prv, Nxt}=ring:create(St#wstate.id, St#wstate.port),
+    {ok, Prv, Nxt}=ring:create(St#wstate.port),
+    megaphone!{enable, St#wstate.id},
     ?INFO("Ring created"), 
 	filesystem!dosanitycheck,
-    handler(workerstate:reset_start_time(workerstate:set_prv(Prv, workerstate:set_nxt(Nxt, workerstate:set_leader(St))))).
+    handler(workerstate:reset_start_time(
+            workerstate:set_prv(Prv,
+            workerstate:set_nxt(Nxt,
+            workerstate:set_leader(St#wstate.id, St))))).
 
-handle_announcements(["SERVER", Id, Ip, Port], St) when St#wstate.isleader, Id>St#wstate.id ->
-    case ring:join(Ip, Port, St#wstate.prv, St#wstate.nxt, St#wstate.port) of
-    continue -> handler(St);
-    {ok, PrvN, NxtN} ->
-        ?INFO("Joined to server ~p at port ~p", [Id, Port]),
-        handler(workerstate:reset_start_time(workerstate:set_prv(PrvN, workerstate:set_nxt(NxtN, workerstate:unset_leader(St)))))
-    end;
-handle_announcements(_, St) -> handler(St).
+clear_msgs() ->
+    receive {tcp, _, _} -> clear_msgs()
+    after 0 -> ok
+    end.
 
 %recibe todos los mensajes del worker
 handler(St) ->
@@ -44,12 +45,11 @@ handler(St) ->
         handlePrv(cmd:parse(B), St);
     {tcp, Nxt, _} -> exit(?ERROR("Received msg from Nxt"));
     {tcp, S, B} -> % sender desconocido
-        newclient_handler(S, cmd:parse(B), St);
+        newconnection_handler(S, cmd:parse(B), St);
     {send, Data} -> send_data(Data, St), handler(St);
     {make_ring_packet, Client, Cmd, Args} ->
         Client!cmd:make(["RING", St#wstate.id, St#wstate.numpaq, Cmd, {Client, Args}]),
         handler(workerstate:increment_numpaq(St));
-    {pass_announce, Id} -> send_data(cmd:make(["ANNOUNCE", Id]), St), handler(St);
     {client_closed, Pid} -> ?INFO("Client disconnected"), handler(workerstate:remove_client(Pid, St));
     {tcp_closed, Nxt} -> gen_tcp:close(Prv), restart(St);
     {tcp_closed, Prv} -> gen_tcp:close(Nxt), restart(St);
@@ -57,7 +57,28 @@ handler(St) ->
     Msg -> exit(?ERROR("Unhandled MSG: ~p", [Msg]))
     end.
 
-newclient_handler(S, ["WORK", Port], St) ->%es un worker que quiere unirse
+handle_announcements(["SERVER", Id, Ip, Port], St) when Id>St#wstate.leader_id ->
+    case ring:join(Ip, Port, St#wstate.prv, St#wstate.nxt, St#wstate.port) of
+    continue -> handler(St);
+    {ok, PrvN, NxtN} ->
+        ?INFO("Joined to server ~p at port ~p", [Id, Port]),
+        handler(workerstate:reset_start_time(
+                workerstate:set_prv(PrvN,
+                workerstate:set_nxt(NxtN,
+                workerstate:set_leader(Id, St)))))
+    end;
+handle_announcements(_, St) -> handler(St).
+
+pass_megaphone(St) -> 
+    megaphone!{is_enabled, self()},
+    receive
+    {is_enabled, true} ->
+        megaphone!disable,
+        send_data(cmd:make(["ANNOUNCE"]), St);
+    {is_enabled, false} -> ok
+    end.
+
+newconnection_handler(S, ["WORK", Port], St) ->%es un worker que quiere unirse
     case ring:addWorker(S, Port, St#wstate.prv, St#wstate.nxt) of
     continue -> handler(St);
     reset -> restart(St);
@@ -65,14 +86,15 @@ newclient_handler(S, ["WORK", Port], St) ->%es un worker que quiere unirse
         ?INFO("Worker connected"),
         handler(workerstate:reset_start_time(workerstate:set_prv(PrvN, workerstate:set_nxt(NxtN, St))))
     end;
-newclient_handler(S, ["CON"], St) ->
+newconnection_handler(S, ["CON"], St) ->
     Pid=client:start(clientstate:create(S)),
     gen_tcp:controlling_process(S, Pid),
+    pass_megaphone(St),
     ?INFO("Client connected"),
     handler(workerstate:add_client(Pid, St));
 %aqui llegan los mensajes de anillos ya destruidos(descartados):
 %o de clientes que ponen mal el primer comando
-newclient_handler(S, _, St) ->
+newconnection_handler(S, _, St) ->
     gen_tcp:close(S), handler(St).
     
 handlePrv(["SETPRV", Ip, Port], St) ->
@@ -100,14 +122,15 @@ handlePrv(["RING", Id, N, Cmd, {Client, Args}], St) -> %se recibio un mensaje de
             end
         end
     end), handler(St);
-handlePrv(["ANNOUNCE", Id], St) ->
-    announcer!{enable, Id}, handler(St);
+handlePrv(["ANNOUNCE"], St) ->
+    megaphone!{enable, St#wstate.leader_id}, handler(St);
 handlePrv({error, B}, _) -> exit(?ERROR("Badformed TCP-MSG: ~p", [B])).
 
 %Solicita al anillo que cree un paquete y lo envie
 send_to_ring(Cmd, Args) ->
     worker!{make_ring_packet, self(), Cmd, Args},
     receive Paq -> Paq end, send(Paq).
+    
 %Envia un paquete y espera su respuesta (reenvia si se reinicio)
 send(Paq) ->
     worker!{send, Paq},

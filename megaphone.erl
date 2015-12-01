@@ -1,6 +1,5 @@
--module(announcer).
+-module(megaphone).
 -include("logging.hrl").
--include("workerstate.hrl").
 -export([start/2]).
 
 -define(UDPPORT,41581).
@@ -16,24 +15,17 @@ start(Port, WorkerPid) ->
                             {active,true},  {ip, ?MULTICAST},
                             {add_membership, {?MULTICAST, {0,0,0,0}}}]),
     gen_udp:controlling_process(UDP, WorkerPid),%worker receives the messages
-    Pid = spawn(fun() -> handler(UDP, undefined, Port, false) end), register(announcer, Pid), Pid.
+    Pid = spawn(fun() -> handler(UDP, undefined, Port, false) end), register(megaphone, Pid), Pid.
     
 %anuncia al worker
 handler(UDP, Id, MyPort, Enabled) ->
     receive
     {enable, NewId} -> handler(UDP, NewId, MyPort, true);
-    disable -> handler(UDP, Id, MyPort, false)
+    disable -> handler(UDP, Id, MyPort, false);
+    {is_enabled, Pid} -> Pid!{is_enabled, Enabled}, handler(UDP, Id, MyPort, Enabled)
     after ?BROADCAST_INTERVAL ->
         case Enabled of
-        true ->
-            case random:uniform() =< ?CHANCE_CHANGE_ANNOUNCER of
-            true ->
-                worker!{pass_announce, Id},
-                handler(UDP, undefined, MyPort, false);
-            false ->
-                gen_udp:send(UDP, ?MULTICAST, ?UDPPORT,  cmd:make(["SERVER", Id, getip(), MyPort])),
-                handler(UDP, Id, MyPort, Enabled)
-            end;
-        false -> handler(UDP, Id, MyPort, Enabled)
-        end
+        true -> gen_udp:send(UDP, ?MULTICAST, ?UDPPORT, cmd:make(["SERVER", Id, getip(), MyPort]));
+        false -> ok
+        end, handler(UDP, Id, MyPort, Enabled)
     end.

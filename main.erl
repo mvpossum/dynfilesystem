@@ -19,11 +19,11 @@ start(MyPort, Folder) when is_integer(MyPort) ->
     link(fs:start(fsstate:create(MyId, Folder))),
     Worker=worker:start(workerstate:create(MyId, Port)),
     link(Worker),
-    link(announcer:start(Port, Worker)),
+    link(megaphone:start(Port, Worker)),
     ?INFO("Started worker at port ~p with id ~p, using storage folder ~p", [Port, MyId, Folder]),
     
     %prints periodically how many workers are in the ring:
-    timer:apply_interval(2000, erlang, apply, [fun() -> ?DF("~p workers.", [fs:count()]) end, []]),
+    %~ timer:apply_interval(4000, erlang, apply, [fun() -> ?DF("~p workers.", [fs:count()]) end, []]),
     
     %error messages coming from the links are trapped here:
     receive {'EXIT',_,Reason} -> exit(?ERROR("~p", [Reason])) end;

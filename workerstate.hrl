@@ -1,8 +1,8 @@
 -record(wstate, {prv,
                  nxt,
                  id,
+                 leader_id,
                  port,
-                 isleader,
                  clients,
                  numpaq,
                  start_time}).

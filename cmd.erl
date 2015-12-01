@@ -10,7 +10,7 @@ info("SETPRV") -> [ip,int];
 info("OKPRV") -> [];
 info("OKWORK") -> [];
 info("IMNXT") -> [];
-info("ANNOUNCE") -> [int];
+info("ANNOUNCE") -> [];
 info("RING") -> [int, int, string, term];
 
 %%Comandos del cliente

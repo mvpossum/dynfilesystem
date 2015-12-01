@@ -99,7 +99,7 @@ handleCommand(["CLO", "FD", FD], St) ->
     notopen -> {St, getanswer(badfd)};
     File -> {clientstate:close_file(FD, St), getanswer(fs:close(File))}
     end;
-handleCommand(Msg, St) -> {St, getanswer(badcmd)}.
+handleCommand(_, St) -> {St, getanswer(badcmd)}.
 
 
 %util functions
