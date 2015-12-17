@@ -33,6 +33,33 @@
 \begin{document}
 
 \begin{titlepage}
+\begin{tikzpicture}[remember picture,overlay,shorten >=1pt,->,draw=black!80]
+    \tikzstyle{every pin edge}=[<-,shorten <=1pt,]
+    \tikzstyle{neuron}=[circle,fill=black!25,minimum size=25pt,thick,inner sep=1pt]
+    \tikzstyle{input neuron}=[neuron, fill=green!50, draw=black!60!green, opacity=0.4];
+    \tikzstyle{output neuron}=[neuron, fill=red!50, draw=black!60!red, opacity=0.4];
+    \tikzstyle{hidden neuron}=[neuron, fill=blue!50, draw=black!60!blue, opacity=0.4];
+	\tikzset{every loop/.style={min distance=20mm,in=50,out=130, looseness=2}}
+	\node (start) {};
+    \node[output neuron] (N1) [below left=3 cm and -1cm of start] {};
+    \node[input neuron] (N2) [below left=4.5cm and 0.7cm of N1] {};
+    \node[hidden neuron] (N3) [below right=1.5cm and 0.5cm of N2] {};
+    \node[input neuron] (N4) [below right=1.cm and 1.5cm of N3] {};
+    \node[input neuron] (N5) [above right=-0.7cm and 6.8cm of N4] {};
+    \node[hidden neuron] (N6) [above right=1cm and 1.5cm of N5] {};
+    \node[input neuron] (N7) [above right=1.5cm and 0.5cm of N6] {};
+    \node[output neuron] (N8) [above left=4.5cm and 0.6cm of N7] {};
+    \node (hidden) [above left=3.3cm and 1cm of N5] {};
+    \path[->,black,ultra thick, bend right, looseness=0.4]
+    		  (N1) edge (N2) 
+    		  (N2) edge (N3) 
+    	      (N3) edge (N4)
+    	      (N4) edge (N5)
+    	      (N5) edge (hidden)
+    	      (N6) edge (N7)
+    	      (N7) edge (N8)
+    	      (N8) edge (N1) ;
+\end{tikzpicture}
 
 \newcommand{\HRule}{\rule{\linewidth}{0.5mm}} % Defines a new command for the horizontal lines, change thickness here
 
@@ -45,15 +72,17 @@
 \textsc{\LARGE Universidad Nacional de Rosario}\\[0.5cm] % Name of your university/college
 \textsc{\Large Ciencias de la Computación}\\[1.5cm] % Major heading such as course name
 \textsc{\Large Sistemas Operativos I}\\[0.5cm] % Major heading such as course name
-\textsc{\large Trabajo Final - Sistema de archivos distribuido}\\[0.5cm] % Minor heading such as course title
+\textsc{\large Trabajo Final}\\[0.5cm] % Minor heading such as course title
+
 
 %----------------------------------------------------------------------------------------
 %   TITLE SECTION
 %----------------------------------------------------------------------------------------
 
 \HRule \\[0.4cm]
-{ \huge \bfseries INVENTAR NOMBRE}\\[0.4cm] % Title of your document
-\HRule \\[1.5cm]
+{ \huge \bfseries Sistema de Archivos Distribuido}\\[0.4cm] % Title of your document
+\textsc{\large (con anillos dinámicos)}\\[0.5cm] % Minor heading such as course title
+\HRule \\[1cm]
  
 %----------------------------------------------------------------------------------------
 %   AUTHOR SECTION
@@ -75,13 +104,13 @@
 
 % If you don't want a supervisor, uncomment the two lines below and remove the section above
 \Large \emph{Autor}\\
-\textsc{Martín Villagra}\\[2cm] % Your name
+\textsc{Martín Villagra}\\[1cm] % Your name
 
 %----------------------------------------------------------------------------------------
 %   DATE SECTION
 %----------------------------------------------------------------------------------------
 
-{\large \today}\\[1cm] % Date, change the \today to a set date if you want to be precise
+{\large \today}\\[0.5cm] % Date, change the \today to a set date if you want to be precise
 
 %----------------------------------------------------------------------------------------
 %   LOGO SECTION
@@ -91,10 +120,7 @@
  
 %----------------------------------------------------------------------------------------
 
-\vfill % Fill the rest of the page with whitespace
-
 \end{titlepage}
-
 \section{Introducción}
 Se presenta un sistema de archivos distribuido totalmente descentralizado escrito en Erlang, junto con detalles de su funcionamiento. El mismo se diseñó para que requiera la mínima intervención del usuario para configurarse.
 
@@ -232,7 +258,7 @@ Cada anillo va a poseer un líder, el cual será el nodo con mayor \emph{ID}. Tamb
 \end{tikzpicture}
 \end{center}
 
-Los nodos prefieren estar con líderes con \emph{ID}s más grandes. Cada nodo va a estar permanentemente escuchando por mensajes que anuncien anillos nuevos. \textbf{Si un nodo detecta un anillo cuyo líder posee un \emph{ID} más grande que el de el líder del anillo actual entonces abandona su anillo y procede a unirse al anillo detectado.}
+Cada nodo va a estar permanentemente escuchando por mensajes que anuncien anillos nuevos. Los nodos prefieren estar con líderes con \emph{ID}s más grandes. \textbf{Si un nodo detecta un anillo cuyo líder posee un \emph{ID} más grande que el de el líder del anillo actual entonces abandona su anillo y procede a unirse al anillo detectado.}
 
 Este último comportamiento junto con la únicidad de los \emph{ID}s asegura que luego de un tiempo va a haber un único anillo conformado por todos los nodos en la red.
 
@@ -391,10 +417,10 @@ La idea sería que para realizar cambios en el estado de un archivo\footnote{reno
 Los lista de locks son el único estado global que mantiene cada worker. Los cambios en los locks se tienen que propagar por todos los nodos para mantener esta lista.
 
 \subsubsection{Procedimiento para adquirir un lock}
-Para que el nodo \emph{A} obtenga un lock sobre un archivo primero se fija en la lista de locks que posee. Si no aparece, entonces no está bloqueado y procede a intentar adquirirlo.
+Para que el nodo \emph{A} obtenga un lock sobre un archivo primero se fija en la lista de locks globales que posee. Si no aparece, entonces no está bloqueado y procede a intentar adquirirlo.
 
 
-Para hacerlo envia un mensaje de anillo \emph{M} preguntando a cada nodo si se opone a la adquisión de tal bloqueo y si no, que lo agregue a su lista de locks. Si nadie se opone, el lock se adquiere y todos actualizan sus listas de locks.
+Para hacerlo envia un mensaje de anillo \emph{M} preguntando a cada nodo si se opone a la adquisión de tal bloqueo y si no, que lo agregue a su lista de locks. Si nadie se opone, el lock se adquiere y las listas de locks quedan actualizadas con este nuevo lock.
 
 
 Si en cambio un nodo \emph{B} recibe este mensaje y se encuentra con que el archivo está bloqueado por otro nodo, la única explicación para esto es que ese lock todavía no había llegado a \emph{A} al momento de emitir \emph{M} (pues sino A hubiera sabido que el lock ya fue adquirido mirando su lista de locks). Es decir estamos en el caso de dos locks que se emitieron `casi` a la vez. En este caso debemos decidir cual va a prevalecer y elegimos que prevalezca el lock proveniente del worker con \emph{ID} más grande, descartando el otro.
@@ -408,7 +434,25 @@ El estado global de los nodos queda consistente, pues el mensaje del de \emph{ID
 
 Este sistema tiene semejanzas con el protocolo de commit en dos fases\footnote{\url{https://en.wikipedia.org/wiki/Two-phase_commit_protocol}} en el sentido de que hay una votación para modificar el estado global (los archivos bloqueados). Pero la diferencia está en que no se necesario deshacer los cambios de las operaciones fallidas.
 
+\section{Casos Especiales}
+\subsection{Estabilidad}
+Antes de formarse el anillo final con todos los nodos pueden formarse varios anillos más pequeños. Un nodo puede unirse a un nodo pensando que es el más grande solamente porque todavía no recibió ningún anuncio del verdadero líder.
 
+Es por esto que es preferible esperar algún tiempo desde la creación del anillo para que todos los nodos se unan antes de comenzar a mandar mensajes de anillo. Esto provoca que cuando un anillo se rompe justo cuando el cliente manda un comando, el usuario lo perciba como un ligero retardo en la respuesta de su comando, pues su consulta está esperando a que el anillo se estabilize.
+\subsection{Archivos huérfanos}
+Cuando un cliente se desconecta, el worker al cual estaba conectado cierra todos los archivos que dejó abiertos. Ahora propongamos otro escenario: supongamos que el cliente se conecta al worker A y abre un archivo ubicado en B. Luego si A deja de funcionar el cliente obviamente queda desconectado y el archivo de B queda abierto. Es decir en el resto de los workers figura como si alguien tiene un lock sobre él.
+
+\subsubsection{Solución}
+La solución implementada consiste en que cada vez que se rompa el anillo (y pasado el período de estabilidad) cada worker se cerciore de que los archivos que tiene abiertos localmente efectivamente estén abiertos por algún cliente. Si hay algún archivo abierto pero no es poseído por ningún cliente, se procede a cerrarlo y liberar su lock.
+
+\subsection{Escritura sin respuesta}
+Existe un caso especial que es cuando un cliente manda una instrucción para escribir en un archivo y justo se rompe el anillo. Por defecto los mensajes de anillo que circulaban por el anillo antes de romperse se destruyen. Entonces es imposible saber si el archivo fue modificado o no. Si reenviamos la petición de escritura podríamos estar escribiendo dos veces.
+\subsubsection{Solución}
+La solución fue crear un caché que guarda las respuestas.
+Primero, se numeran los paquetes de cada worker. Así un paquete es identificado por el par (worker \emph{ID}, número de paquete).
+Para cada paquete el caché guarda su respectiva respuesta. Ahora cuando se recibe un mensaje antes de procesarlo primero hay que fijarse en el caché si ya había sido  procesado anteriormente y si es así devolver la respuesta guardada en el caché.
+
+De esta forma cuando se reenvie el paquete, la respuesta va a ser la correcta y la escritura no se va a realizar dos veces.
 \section{Código}
 El código del servidor y de los clientes está disponible en el respositorio:
 
@@ -435,10 +479,5 @@ Ejecuta un proceso que contiene la cache del worker.
 \item \textbf{cmd.erl}
 Contiene operaciones para parsear los mensajes entrantes y para transformarlos a binario así pueden ser enviados por los sockets. Es utilizado desde el lado del worker y desde el cliente.
 \end{itemize}
-
-%    -fs: procesar, send 
-%    -Concurrencia (lockedfiles y otros estados)
-%    -Casos especiales: cache
-%    -wait time estabilidad
 
 \end{document}
