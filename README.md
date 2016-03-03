@@ -14,6 +14,7 @@ Requirements
 
 
 > sudo apt-get install fuse erlang
+
 > pip install python-dateutil fusepy
 
 Running
