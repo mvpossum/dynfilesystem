@@ -4,7 +4,7 @@ Click and Working File System (CAWFS) es un sistema de archivos distribuido
 que requiere la minima intervencion del usuario para comenzar a funcionar.
 
 
-Requeriments
+Requirements
 ================
 - make
 - erlang (for running the server, working with version Erlang/OTP 18 [erts-7.1] [source] [64-bit] [smp:4:4] [async-threads:10] [hipe] [kernel-poll:false] )
