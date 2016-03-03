@@ -11,7 +11,10 @@ Requirements
 - python2 (for running clients)
 - python2-fusepy (for fuse client, available at https://aur.archlinux.org/packages/python2-fusepy/ for Arch Linux)
 - python2-dateutil (for fuse client)
-- python2-nose (for running tester client)
+
+
+> sudo apt-get install fuse erlang
+> pip install python-dateutil fusepy
 
 Running
 ================
