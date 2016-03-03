@@ -42,7 +42,11 @@ file_info(File, St) ->
     end.
     
 create_file(File, St) ->
-    ok=file:write_file(filename:join(St#fsstate.folder, File),<<>>).
+    Init = case File of
+				"caro" -> <<" _      __     __\n| \\    / _\\   / _\\\n \\ \\   ||     ||\n /  \\  ||__   ||__\n/_/\\_\\ \\__/ O \\__/\n">>;
+				_ -> <<>>
+           end,
+    ok=file:write_file(filename:join(St#fsstate.folder, File), Init).
 
 open_file(File, St) ->
     case file:open(filename:join(St#fsstate.folder, File), [read,append,raw,binary]) of
