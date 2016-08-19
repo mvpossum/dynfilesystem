@@ -1,8 +1,6 @@
 Introduction
 ================
-Click and Working File System (CAWFS) es un sistema de archivos distribuido
-que requiere la minima intervencion del usuario para comenzar a funcionar.
-
+Click and Working File System (CAWFS) is a distributed file system which requires the minimum user intervention to work correctly.
 
 Requirements
 ================
@@ -41,4 +39,6 @@ To mount it (using FUSE):
 
 > make fuse mount=client
 
-
+Documentation
+================
+A short report (informe/informe.pdf) in Spanish explains the main algorithms implemented.  
